@@ -157,18 +157,45 @@ protocol/mitm/
   - 自研 App 调试信任（URLSessionDelegate / Info.plist）
   - 故障排查表
 
-## Phase 8：集成测试 + 性能硬化
+## Phase 8：集成测试 + 性能硬化 ✅
+
+**完成标准（README 第 35-43 节）：**
+- 端到端集成测试覆盖 TLS 终止、重写引擎、配置解析
+- 性能硬化：证书 LRU 缓存、Body 大小限制、上游超时
+- 生产硬化：Fail-open/Fail-closed 配置、CA 私钥权限、错误处理
+
+**已实现：**
+- `option/mitm.go`：添加 `on_error`（bypass/block）和 `upstream_timeout` 配置
+- `service.go`：添加 `是否失败时绕过()` 和 `获取上游超时()` 方法
+- `upstream.go`：上游 TLS 握手超时控制（默认 30 秒，可配置）
+- `integration_test.go`：6 个集成测试
+  - TLS 终止完整握手（客户端 → MITM → 证书验证 → 数据回显）
+  - 重写引擎请求头修改
+  - 重写引擎响应头 + gzip Body 替换
+  - 完整配置解析（含 rewrite 规则/on_error/upstream_timeout）
+  - 失败时绕过策略（bypass/block/默认）
+  - 上游超时配置（默认/自定义）
+
+## 八阶段全部完成 ✅
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| Phase 8 | 集成测试 + 性能硬化 | 待开始 |
+| Phase 1 | 配置结构 + 服务注册 + CA 加载 | ✅ |
+| Phase 2 | 动态证书 + SNI 解析 | ✅ |
+| Phase 3 | TUN 拦截 + TLS 终止 + 上游连接 | ✅ |
+| Phase 4 | HTTP/1.1 + HTTP/2 + WebSocket | ✅ |
+| Phase 5 | Router 集成深化 + Outbound 集成 | ✅ |
+| Phase 6 | Rewrite 引擎 + 压缩处理 | ✅ |
+| Phase 7 | iOS 越狱层（CA/LaunchDaemon/部署文档） | ✅ |
+| Phase 8 | 集成测试 + 性能硬化 + 生产硬化 | ✅ |
 
 ## 验证结果
 
-- `go build ./cmd/sing-box` ✅ 编译通过（53MB）
+- `go build ./cmd/sing-box` ✅ 编译通过
 - `go build $(go list ./... | grep -v '/experimental/')` ✅ 全部包编译通过
 - `sing-box check -c` 含 mitm 服务的配置 ✅ 校验通过
-- `go test ./protocol/mitm/...` ✅ 13/13 通过
+- `go test ./protocol/mitm/...` ✅ 19/19 通过（13 单元 + 6 集成）
+- `sing-box generate mitm-ca` ✅ CA 证书生成验证通过（openssl 验证 CA 属性）
 - GitHub Actions CI（mitm-ci.yml）✅ 全部 12 步骤 success
   - 编译主程序、编译全部包、MITM 单元测试、相关模块测试、CA 生成、配置校验、产物上传
 
