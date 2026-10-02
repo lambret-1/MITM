@@ -214,6 +214,13 @@ protocol/mitm/
 
 **部署包下载：** `sing-box-mitm-ios-deploy.tar.gz`（12MB，含预编译二进制）
 
+**CI/CD 流水线：**
+- `.github/workflows/ios-deploy.yml`：iOS 部署包自动构建
+- 触发条件：sing-box 分支推送（mitm/option/deploy/ios 相关文件）或手动触发
+- 构建步骤：交叉编译 darwin/arm64 → 验证 Mach-O 格式 → 组装部署包 → 验证完整性 → 打包 tar.gz → 上传 Artifact → 可选 Release
+- 产物：`sing-box-mitm-ios-deploy`（24.7MB 完整部署包）+ `sing-box-darwin-arm64`（12.5MB 单独二进制）
+- 首次运行：run_id 37006471392，全部 11 个步骤 success
+
 **实测步骤摘要：**
 1. SCP 传输部署包到 iOS 设备
 2. 运行 `./install.sh` 一键安装
