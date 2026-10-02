@@ -18,9 +18,9 @@ protocol/mitm/
 ├── tls.go            # TLS 终止（已实现）
 ├── upstream.go       # 上游 TLS 连接（已实现）
 ├── router.go         # Router 集成（骨架）
-├── http1.go          # HTTP/1.1 引擎（骨架）
-├── http2.go          # HTTP/2 引擎（骨架）
-├── websocket.go      # WebSocket 处理（骨架）
+├── http1.go          # HTTP/1.1 引擎（已实现）
+├── http2.go          # HTTP/2 引擎（已实现）
+├── websocket.go      # WebSocket 处理（已实现）
 ├── service_test.go   # 单元测试（13 个）
 └── rewrite/
     ├── engine.go     # 重写引擎（骨架）
@@ -73,12 +73,34 @@ protocol/mitm/
 - `protocol/tun/inbound.go`：`NewConnectionEx` 和 `autoRedirectHandler.NewConnectionEx` 中接入 MITM 拦截器
 - 跨包导出方法：`ShouldIntercept(metadata)` / `Intercept(ctx, conn, metadata, router, onClose)`
 
-## Phase 4-8：骨架已就位，待实现
+## Phase 4：HTTP/1.1 + HTTP/2 + WebSocket 引擎 ✅
+
+**完成标准（README 第 49 节）：**
+- 支持 HTTP/1.1、HTTP/2、WebSocket 三种协议
+- 根据 ALPN 协商自动选择引擎
+- 三种协议统一通过 Router 进行 outbound routing
+
+**已实现：**
+- `protocol/mitm/http1.go`：完整 HTTP/1.1 引擎
+  - bufio 循环读取请求，支持 Keep-Alive 持久连接
+  - 从 Host 头提取域名，通过 Router 建立上游 TLS 连接
+  - 请求转发 → 响应读取 → 写回客户端
+  - 检测 WebSocket Upgrade，切换到双向流转发
+  - 处理 Content-Length、Transfer-Encoding、chunked、trailers
+- `protocol/mitm/http2.go`：基于 golang.org/x/net/http2 的多路复用引擎
+  - http2.Server.ServeConn 管理连接和流生命周期
+  - 每个流独立通过 Router 建立上游连接
+  - http2.Transport 发送上游请求，流式返回响应
+  - 不自行实现 framing，完全依赖标准库扩展
+- `protocol/mitm/websocket.go`：WebSocket Upgrade 检测工具
+- `protocol/mitm/upstream.go`：实现 建立上游连接（net.Pipe + Router + TLS）
+- `protocol/mitm/interceptor.go`：ALPN 协商选择引擎（h2 → HTTP/2，其他 → HTTP/1.1）
+
+## Phase 5-8：骨架已就位，待实现
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| Phase 4 | HTTP/1.1 + HTTP/2 + WebSocket | 骨架（http1.go / http2.go / websocket.go） |
-| Phase 5 | Router 集成 | 骨架（router.go，已适配 RouteConnection API） |
+| Phase 5 | Router 集成深化 | 骨架（router.go，已适配 RouteConnection API） |
 | Phase 6 | Rewrite 引擎 | 骨架（rewrite/，body.go 已含 gzip 解压压缩） |
 | Phase 7 | iOS 越狱层 | 待开始 |
 | Phase 8 | 集成测试 + 性能硬化 | 待开始 |
