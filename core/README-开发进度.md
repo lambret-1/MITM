@@ -14,9 +14,9 @@ protocol/mitm/
 ├── cache.go          # 证书 LRU 缓存
 ├── matcher.go        # 域名匹配器
 ├── clienthello.go    # TLS ClientHello 解析（SNI/ALPN）
-├── interceptor.go    # TUN 拦截接口（骨架）
-├── tls.go            # TLS 终止（骨架）
-├── upstream.go       # 上游连接（骨架）
+├── interceptor.go    # TUN 拦截主流程（已实现）
+├── tls.go            # TLS 终止（已实现）
+├── upstream.go       # 上游 TLS 连接（已实现）
 ├── router.go         # Router 集成（骨架）
 ├── http1.go          # HTTP/1.1 引擎（骨架）
 ├── http2.go          # HTTP/2 引擎（骨架）
@@ -54,11 +54,29 @@ protocol/mitm/
 - `protocol/mitm/matcher.go`：域名匹配器（精确 + 后缀）
 - `protocol/mitm/clienthello.go`：TLS ClientHello 解析，提取 SNI 和 ALPN，含回退读取器
 
-## Phase 3-8：骨架已就位，待实现
+## Phase 3：TUN 拦截 + TLS 终止 + 上游连接 ✅
+
+**完成标准（README 第 48 节）：**
+- TUN 捕获的 HTTPS 流量能被 MITM 拦截
+- SNI 匹配命中后完成 TLS 终止
+- 通过 Router 建立上游连接并完成上游 TLS
+- 双向转发明文流量
+
+**已实现：**
+- `protocol/mitm/interceptor.go`：完整拦截流程
+  - 读取 ClientHello → SNI 提取 → 域名匹配
+  - 不匹配：回退读取器包装连接，交回 Router 正常路由
+  - 匹配：签发叶子证书 + tls.Server 终止客户端 TLS
+  - 通过 net.Pipe + Router 建立上游连接 + tls.Client 上游 TLS
+  - 双向转发明文（Phase 4 将替换为 HTTP 引擎）
+- `protocol/mitm/clienthello.go`：回退读取器实现完整 net.Conn 接口
+- `protocol/tun/inbound.go`：`NewConnectionEx` 和 `autoRedirectHandler.NewConnectionEx` 中接入 MITM 拦截器
+- 跨包导出方法：`ShouldIntercept(metadata)` / `Intercept(ctx, conn, metadata, router, onClose)`
+
+## Phase 4-8：骨架已就位，待实现
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| Phase 3 | TUN 拦截 + TLS 终止 + 上游连接 | 骨架（interceptor.go / tls.go / upstream.go） |
 | Phase 4 | HTTP/1.1 + HTTP/2 + WebSocket | 骨架（http1.go / http2.go / websocket.go） |
 | Phase 5 | Router 集成 | 骨架（router.go，已适配 RouteConnection API） |
 | Phase 6 | Rewrite 引擎 | 骨架（rewrite/，body.go 已含 gzip 解压压缩） |
@@ -67,15 +85,12 @@ protocol/mitm/
 
 ## 验证结果
 
-- `go build ./cmd/sing-box` ✅ 编译通过
+- `go build ./cmd/sing-box` ✅ 编译通过（53MB）
+- `go build $(go list ./... | grep -v '/experimental/')` ✅ 全部包编译通过
 - `sing-box check -c` 含 mitm 服务的配置 ✅ 校验通过
 - `go test ./protocol/mitm/...` ✅ 13/13 通过
-  - 服务构造（启用/未启用/缺配置/合法CA/非CA拒绝）
-  - 生命周期、注册、上下文获取
-  - 域名匹配器（精确/后缀）
-  - 证书缓存 LRU 淘汰
-  - 动态叶子证书签发 + 缓存命中
-  - TLS ClientHello SNI/ALPN 解析
+- GitHub Actions CI（mitm-ci.yml）✅ 全部 12 步骤 success
+  - 编译主程序、编译全部包、MITM 单元测试、相关模块测试、CA 生成、配置校验、产物上传
 
 ## 配置格式
 
