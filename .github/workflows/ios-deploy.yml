@@ -1,0 +1,186 @@
+name: iOS 部署包构建
+
+on:
+  push:
+    branches:
+      - sing-box
+    paths:
+      - 'protocol/mitm/**'
+      - 'option/mitm.go'
+      - 'deploy/ios/**'
+      - 'cmd/sing-box/cmd_generate_mitm_ca.go'
+      - '.github/workflows/ios-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: '是否创建 GitHub Release'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+concurrency:
+  group: ios-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.25.5"
+  DEPLOY_DIR: "deploy/ios"
+  PACKAGE_NAME: "sing-box-mitm-ios-deploy"
+
+jobs:
+  build-ios-package:
+    name: 构建 iOS 越狱部署包
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 显示 Go 版本
+        run: go version
+
+      - name: 交叉编译 darwin/arm64 二进制
+        run: |
+          echo "=== 交叉编译 darwin/arm64 ==="
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+            go build \
+            -o sing-box-ios \
+            -trimpath \
+            -ldflags="-s -w" \
+            ./cmd/sing-box
+          echo "=== 编译完成 ==="
+          ls -lh sing-box-ios
+          file sing-box-ios
+
+      - name: 验证二进制格式
+        run: |
+          echo "=== 验证 Mach-O 格式 ==="
+          file sing-box-ios | grep -q "Mach-O 64-bit arm64" && echo "✅ Mach-O arm64 格式正确" || { echo "❌ 格式错误"; exit 1; }
+          echo "=== 验证可执行 ==="
+          # darwin 二进制无法在 Linux 运行，仅验证文件存在且非空
+          test -s sing-box-ios && echo "✅ 二进制非空" || { echo "❌ 二进制为空"; exit 1; }
+
+      - name: 组装部署包
+        run: |
+          echo "=== 组装部署包目录 ==="
+          mkdir -p ${{ env.PACKAGE_NAME }}/{bin,config,launchdaemon}
+
+          # 二进制
+          cp sing-box-ios ${{ env.PACKAGE_NAME }}/bin/sing-box
+          chmod 755 ${{ env.PACKAGE_NAME }}/bin/sing-box
+
+          # 配置文件
+          cp ${{ env.DEPLOY_DIR }}/config/config.json ${{ env.PACKAGE_NAME }}/config/
+          chmod 644 ${{ env.PACKAGE_NAME }}/config/config.json
+
+          # LaunchDaemon
+          cp ${{ env.DEPLOY_DIR }}/com.sing-box.mitm.plist ${{ env.PACKAGE_NAME }}/launchdaemon/
+          chmod 644 ${{ env.PACKAGE_NAME }}/launchdaemon/com.sing-box.mitm.plist
+
+          # 安装脚本
+          cp ${{ env.DEPLOY_DIR }}/install.sh ${{ env.PACKAGE_NAME }}/
+          chmod 755 ${{ env.PACKAGE_NAME }}/install.sh
+
+          # 构建脚本
+          cp ${{ env.DEPLOY_DIR }}/build-ios.sh ${{ env.PACKAGE_NAME }}/
+          chmod 755 ${{ env.PACKAGE_NAME }}/build-ios.sh
+
+          # 文档
+          cp ${{ env.DEPLOY_DIR }}/README.md ${{ env.PACKAGE_NAME }}/README.md 2>/dev/null || true
+          cp ${{ env.DEPLOY_DIR }}/README-实测指南.md ${{ env.PACKAGE_NAME }}/README-实测指南.md 2>/dev/null || true
+
+          echo "=== 部署包目录结构 ==="
+          find ${{ env.PACKAGE_NAME }} -type f | sort
+          echo "=== 目录大小 ==="
+          du -sh ${{ env.PACKAGE_NAME }}
+
+      - name: 验证部署包完整性
+        run: |
+          echo "=== 验证必要文件 ==="
+          REQUIRED_FILES=(
+            "${{ env.PACKAGE_NAME }}/bin/sing-box"
+            "${{ env.PACKAGE_NAME }}/config/config.json"
+            "${{ env.PACKAGE_NAME }}/launchdaemon/com.sing-box.mitm.plist"
+            "${{ env.PACKAGE_NAME }}/install.sh"
+          )
+          for f in "${REQUIRED_FILES[@]}"; do
+            test -f "$f" && echo "✅ $f" || { echo "❌ 缺少 $f"; exit 1; }
+          done
+          echo "=== 验证脚本语法 ==="
+          bash -n ${{ env.PACKAGE_NAME }}/install.sh && echo "✅ install.sh 语法正确"
+          bash -n ${{ env.PACKAGE_NAME }}/build-ios.sh && echo "✅ build-ios.sh 语法正确"
+          echo "=== 验证配置 JSON ==="
+          python3 -c "import json; json.load(open('${{ env.PACKAGE_NAME }}/config/config.json'))" && echo "✅ config.json 格式正确"
+          echo "=== 验证 plist ==="
+          python3 -c "import plistlib; plistlib.load(open('${{ env.PACKAGE_NAME }}/launchdaemon/com.sing-box.mitm.plist','rb'))" && echo "✅ plist 格式正确"
+
+      - name: 打包 tar.gz
+        run: |
+          echo "=== 打包 ==="
+          tar -czf ${{ env.PACKAGE_NAME }}.tar.gz ${{ env.PACKAGE_NAME }}/
+          ls -lh ${{ env.PACKAGE_NAME }}.tar.gz
+          echo "=== 包内容 ==="
+          tar -tzf ${{ env.PACKAGE_NAME }}.tar.gz
+
+      - name: 上传部署包 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}
+          path: |
+            ${{ env.PACKAGE_NAME }}.tar.gz
+            ${{ env.PACKAGE_NAME }}/
+          retention-days: 30
+
+      - name: 上传单独二进制 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-darwin-arm64
+          path: sing-box-ios
+          retention-days: 30
+
+      - name: 创建 GitHub Release
+        if: ${{ github.event.inputs.create_release == 'true' || github.ref == 'refs/heads/sing-box' && contains(github.event.head_commit.message, 'release') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-deploy-${{ github.sha }}
+          name: "iOS 部署包 ${{ github.sha }}"
+          body: |
+            ## sing-box MITM iOS 越狱部署包
+
+            **构建信息：**
+            - Commit: ${{ github.sha }}
+            - Go 版本: ${{ env.GO_VERSION }}
+            - 目标平台: darwin/arm64（iOS 越狱设备）
+            - 构建时间: ${{ github.event.head_commit.timestamp }}
+
+            **部署包内容：**
+            - `bin/sing-box` — 预编译二进制（Mach-O arm64）
+            - `config/config.json` — TUN + MITM 配置模板
+            - `launchdaemon/com.sing-box.mitm.plist` — 开机自启配置
+            - `install.sh` — 一键安装脚本
+            - `build-ios.sh` — 交叉编译脚本
+            - `README-实测指南.md` — 完整实测指南
+
+            **快速开始：**
+            \`\`\`bash
+            scp sing-box-mitm-ios-deploy.tar.gz root@<设备IP>:/var/root/
+            ssh root@<设备IP>
+            tar -xzf sing-box-mitm-ios-deploy.tar.gz
+            cd sing-box-mitm-ios-deploy
+            ./install.sh
+            \`\`\`
+          files: |
+            ${{ env.PACKAGE_NAME }}.tar.gz
+            sing-box-ios
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
