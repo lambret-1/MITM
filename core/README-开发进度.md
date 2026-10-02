@@ -135,11 +135,32 @@ protocol/mitm/
 - `service.go`：初始化重写引擎，提供 获取重写引擎 方法
 - `http1.go` / `http2.go`：请求前调用 RewriteRequest，响应后调用 RewriteResponse
 
-## Phase 7-8：待实现
+## Phase 7：iOS 越狱层 ✅
+
+**完成标准（README 第 29-32 节）：**
+- 提供 MITM CA 证书生成 CLI 工具
+- 提供 LaunchDaemon 开机自启配置
+- 提供 iOS 部署完整指南（CA 安装/配置/调试信任/故障排查）
+
+**已实现：**
+- `cmd/sing-box/cmd_generate_mitm_ca.go`：`sing-box generate mitm-ca` 命令
+  - ECDSA P-256 算法，CA:TRUE，KeyUsage: CertSign
+  - 参数：--name（证书名）、--validity（有效期天）、--output（输出目录）
+  - 输出 ca.pem（0644）和 ca.key（0600）
+- `deploy/ios/com.sing-box.mitm.plist`：LaunchDaemon 配置模板
+  - RunAtLoad + KeepAlive，开机自启 + 崩溃自动重启
+  - 标准输出/错误日志到 /var/log/
+- `deploy/ios/README.md`：iOS 越狱部署完整指南
+  - CA 证书生成与安装（描述文件 + 证书信任设置）
+  - sing-box 二进制部署与配置
+  - LaunchDaemon 加载/卸载/状态查看
+  - 自研 App 调试信任（URLSessionDelegate / Info.plist）
+  - 故障排查表
+
+## Phase 8：集成测试 + 性能硬化
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| Phase 7 | iOS 越狱层（CA 安装/LaunchDaemon/调试信任） | 待开始 |
 | Phase 8 | 集成测试 + 性能硬化 | 待开始 |
 
 ## 验证结果
