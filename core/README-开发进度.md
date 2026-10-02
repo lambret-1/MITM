@@ -17,7 +17,7 @@ protocol/mitm/
 ├── interceptor.go    # TUN 拦截主流程（已实现）
 ├── tls.go            # TLS 终止（已实现）
 ├── upstream.go       # 上游 TLS 连接（已实现）
-├── router.go         # Router 集成（骨架）
+├── router.go         # Router 集成（已实现）
 ├── http1.go          # HTTP/1.1 引擎（已实现）
 ├── http2.go          # HTTP/2 引擎（已实现）
 ├── websocket.go      # WebSocket 处理（已实现）
@@ -96,11 +96,26 @@ protocol/mitm/
 - `protocol/mitm/upstream.go`：实现 建立上游连接（net.Pipe + Router + TLS）
 - `protocol/mitm/interceptor.go`：ALPN 协商选择引擎（h2 → HTTP/2，其他 → HTTP/1.1）
 
-## Phase 5-8：骨架已就位，待实现
+## Phase 5：Router 集成深化 + Outbound 集成 ✅
+
+**完成标准（README 第 23、24 节）：**
+- 解密后的 HTTP 请求构造 sing-box metadata（domain = Host）
+- 所有出站流量经过 sing-box Router 决策（domain/geosite/geoip/rule-set）
+- MITM 不自行选择 Proxy，全部由 Router 处理
+- Inbound 标记为 "mitm"，便于 route 规则区分
+
+**已实现：**
+- `protocol/mitm/upstream.go`：建立上游连接时构造域名 metadata
+  - Destination = 域名:443（Router 按域名规则路由）
+  - Inbound/InboundType = "mitm"（route 规则可区分 MITM 流量）
+  - net.Pipe + Router.RouteConnectionEx 建立出站连接
+- `protocol/mitm/router.go`：完善 构造入站上下文 和 路由连接，使用 TypeMITM 常量
+- HTTP/1.1 和 HTTP/2 引擎每个请求独立通过 Router 建立上游连接
+
+## Phase 6-8：骨架已就位，待实现
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| Phase 5 | Router 集成深化 | 骨架（router.go，已适配 RouteConnection API） |
 | Phase 6 | Rewrite 引擎 | 骨架（rewrite/，body.go 已含 gzip 解压压缩） |
 | Phase 7 | iOS 越狱层 | 待开始 |
 | Phase 8 | 集成测试 + 性能硬化 | 待开始 |
