@@ -112,12 +112,34 @@ protocol/mitm/
 - `protocol/mitm/router.go`：完善 构造入站上下文 和 路由连接，使用 TypeMITM 常量
 - HTTP/1.1 和 HTTP/2 引擎每个请求独立通过 Router 建立上游连接
 
-## Phase 6-8：骨架已就位，待实现
+## Phase 6：Rewrite 引擎 + 压缩处理 ✅
+
+**完成标准（README 第 21、22 节）：**
+- 支持请求头/响应头修改（设置/删除）
+- 支持响应体替换（含 gzip 解压/重压缩）
+- 正确更新 Content-Length、Content-Encoding、Transfer-Encoding
+- 超过 max_body_size 的响应跳过重写
+
+**已实现：**
+- `option/mitm.go`：扩展 MITMRewriteOptions
+  - `max_body_size`：最大重写体大小（默认 10MB）
+  - `rules[]`：重写规则列表（domain_suffix/path_prefix/method/request_header/response_header/body_replace）
+- `rewrite/engine.go`：重写引擎主体（导出类型 Engine/NewEngine/RewriteRequest/RewriteResponse）
+  - 从配置加载规则，按顺序匹配并应用
+  - 响应重写收集所有命中规则的 Body 替换，调用体重写器
+- `rewrite/body.go`：体重写器
+  - gzip 解压 → 字节替换 → gzip 重压缩
+  - 带大小限制（LimitReader），超过则跳过
+  - 正确更新 Content-Length、Content-Encoding、Transfer-Encoding
+- `rewrite/rule.go`：规则匹配（域名后缀/路径前缀/方法）+ 头修改
+- `service.go`：初始化重写引擎，提供 获取重写引擎 方法
+- `http1.go` / `http2.go`：请求前调用 RewriteRequest，响应后调用 RewriteResponse
+
+## Phase 7-8：待实现
 
 | 阶段 | 内容 | 状态 |
 | --- | --- | --- |
-| Phase 6 | Rewrite 引擎 | 骨架（rewrite/，body.go 已含 gzip 解压压缩） |
-| Phase 7 | iOS 越狱层 | 待开始 |
+| Phase 7 | iOS 越狱层（CA 安装/LaunchDaemon/调试信任） | 待开始 |
 | Phase 8 | 集成测试 + 性能硬化 | 待开始 |
 
 ## 验证结果
@@ -148,7 +170,16 @@ protocol/mitm/
         "domain_suffix": ["example.com"]
       },
       "rewrite": {
-        "enabled": true
+        "enabled": true,
+        "max_body_size": 10485760,
+        "rules": [
+          {
+            "domain_suffix": ["example.com"],
+            "path_prefix": "/api/",
+            "response_header": {"X-Debug": "1"},
+            "body_replace": [{"find": "old", "replace": "new"}]
+          }
+        ]
       }
     }
   ]
