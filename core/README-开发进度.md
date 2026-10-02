@@ -199,6 +199,29 @@ protocol/mitm/
 - GitHub Actions CI（mitm-ci.yml）✅ 全部 12 步骤 success
   - 编译主程序、编译全部包、MITM 单元测试、相关模块测试、CA 生成、配置校验、产物上传
 
+## iOS 越狱实测阶段 ✅（部署包已就绪）
+
+**交叉编译：**
+- `CGO_ENABLED=0 GOOS=darwin GOARCH=arm64` 编译成功（34MB Mach-O arm64）
+- iOS/arm64 需要 CGO 链接，Linux 环境无法直接构建，使用 darwin/arm64 替代
+
+**部署包内容（`deploy/ios/`）：**
+- `build-ios.sh`：Linux 交叉编译脚本
+- `install.sh`：iOS 设备一键安装脚本（二进制+配置+CA+LaunchDaemon）
+- `config/config.json`：iOS 部署配置模板（TUN + MITM + Rewrite）
+- `com.sing-box.mitm.plist`：LaunchDaemon 开机自启配置
+- `README-实测指南.md`：完整实测指南（安装/CA信任/启动/验证/排障/卸载）
+
+**部署包下载：** `sing-box-mitm-ios-deploy.tar.gz`（12MB，含预编译二进制）
+
+**实测步骤摘要：**
+1. SCP 传输部署包到 iOS 设备
+2. 运行 `./install.sh` 一键安装
+3. 安装 CA 证书到系统信任存储（描述文件 + 证书信任设置）
+4. `launchctl load` 启动服务
+5. Safari 访问 `https://example.com`，验证证书由 MITM CA 签发
+6. 查看日志确认 MITM 拦截流程
+
 ## 配置格式
 
 注意：sing-box 的 service 配置是**扁平结构**，`Options` 字段 tag 为 `json:"-"`，通过 `badjson.UnmarshallExcludedContext` 解析。
