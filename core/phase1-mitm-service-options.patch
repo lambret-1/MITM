@@ -1,0 +1,496 @@
+diff --git a/constant/proxy.go b/constant/proxy.go
+index 2993eb9..5a460b1 100644
+--- a/constant/proxy.go
++++ b/constant/proxy.go
+@@ -46,6 +46,7 @@ const (
+ 	TypeHysteriaRealm      = "hysteria-realm"
+ 	TypeACME               = "acme"
+ 	TypeCloudflareOriginCA = "cloudflare-origin-ca"
++	TypeMITM               = "mitm"
+ )
+ 
+ const (
+diff --git a/include/mitm.go b/include/mitm.go
+new file mode 100644
+index 0000000..0eeeb33
+--- /dev/null
++++ b/include/mitm.go
+@@ -0,0 +1,11 @@
++package include
++
++import (
++	"github.com/sagernet/sing-box/adapter/service"
++	"github.com/sagernet/sing-box/service/mitm"
++)
++
++// registerMITMService 注册 MITM 服务到服务注册表
++func registerMITMService(registry *service.Registry) {
++	mitm.RegisterService(registry)
++}
+diff --git a/include/registry.go b/include/registry.go
+index fbb398d..0fb222a 100644
+--- a/include/registry.go
++++ b/include/registry.go
+@@ -157,6 +157,7 @@ func ServiceRegistry() *service.Registry {
+ 	registerOCMService(registry)
+ 	registerOOMKillerService(registry)
+ 	registerUSBIPServices(registry)
++	registerMITMService(registry)
+ 
+ 	return registry
+ }
+diff --git a/option/mitm.go b/option/mitm.go
+new file mode 100644
+index 0000000..23bdd65
+--- /dev/null
++++ b/option/mitm.go
+@@ -0,0 +1,43 @@
++package option
++
++// MITMServiceOptions MITM 服务配置选项
++// 对应 JSON 中 services[] 内 type=mitm 的 options 字段
++type MITMServiceOptions struct {
++	// Enabled 是否启用 MITM 解密
++	Enabled bool `json:"enabled,omitempty"`
++
++	// CA 根证书与私钥路径配置
++	CA MITMCAOptions `json:"ca,omitempty"`
++
++	// Match 需要进行 HTTPS 解密的域名匹配规则
++	Match MITMMatchOptions `json:"match,omitempty"`
++
++	// Rewrite HTTP 请求/响应重写配置
++	Rewrite MITMRewriteOptions `json:"rewrite,omitempty"`
++}
++
++// MITMCAOptions MITM 根证书配置
++// 用于动态签发目标域名的叶子证书
++type MITMCAOptions struct {
++	// Certificate 根证书文件路径（PEM 格式）
++	Certificate string `json:"certificate"`
++
++	// PrivateKey 根证书私钥文件路径（PEM 格式）
++	PrivateKey string `json:"private_key"`
++}
++
++// MITMMatchOptions MITM 域名匹配规则
++// 命中的域名才会进行 TLS 终止与解密
++type MITMMatchOptions struct {
++	// Domain 精确匹配的域名列表
++	Domain []string `json:"domain,omitempty"`
++
++	// DomainSuffix 后缀匹配的域名列表
++	DomainSuffix []string `json:"domain_suffix,omitempty"`
++}
++
++// MITMRewriteOptions HTTP 重写配置
++type MITMRewriteOptions struct {
++	// Enabled 是否启用 HTTP 重写
++	Enabled bool `json:"enabled,omitempty"`
++}
+diff --git a/service/mitm/service.go b/service/mitm/service.go
+new file mode 100644
+index 0000000..a9877d5
+--- /dev/null
++++ b/service/mitm/service.go
+@@ -0,0 +1,154 @@
++package mitm
++
++import (
++	"context"
++	"crypto/tls"
++	"crypto/x509"
++	"os"
++	"sync"
++
++	"github.com/sagernet/sing-box/adapter"
++	boxService "github.com/sagernet/sing-box/adapter/service"
++	C "github.com/sagernet/sing-box/constant"
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing-box/option"
++	E "github.com/sagernet/sing/common/exceptions"
++	"github.com/sagernet/sing/service"
++)
++
++// RegisterService 将 MITM 服务注册到服务注册表
++func RegisterService(registry *boxService.Registry) {
++	boxService.Register[option.MITMServiceOptions](registry, C.TypeMITM, NewService)
++}
++
++// 编译期断言：Service 必须实现 adapter.Service 接口
++var _ adapter.Service = (*Service)(nil)
++
++// Service MITM 服务主体
++// 负责加载根证书、维护域名匹配器、动态签发叶子证书，
++// 并在后续阶段接入 TUN 拦截与 HTTP 解密。
++type Service struct {
++	boxService.Adapter
++
++	// ctx 服务上下文，用于获取 Router 等全局依赖
++	ctx context.Context
++	// logger 带上下文的日志器
++	logger log.ContextLogger
++	// options MITM 服务配置
++	options option.MITMServiceOptions
++
++	// 根证书相关
++	// 根证书锁，保护证书缓存并发安全
++	证书锁 sync.RWMutex
++	// 根证书（解析后的 tls.Certificate，含私钥）
++	根证书 *tls.Certificate
++	// 根证书的 x509 结构，用于签发叶子证书时设置 Issuer
++	根证书实体 *x509.Certificate
++	// 叶子证书缓存：域名 -> 已签发的 tls.Certificate
++	叶子证书缓存 map[string]*tls.Certificate
++}
++
++// NewService 构造 MITM 服务
++// 完成配置校验与根证书加载，不启动实际拦截逻辑（后续阶段接入）。
++func NewService(ctx context.Context, logger log.ContextLogger, tag string, options option.MITMServiceOptions) (adapter.Service, error) {
++	if !options.Enabled {
++		// 未启用时仍创建服务实例，但不加载证书，避免无意义的文件 IO
++		return &Service{
++			Adapter:   boxService.NewAdapter(C.TypeMITM, tag),
++			ctx:       ctx,
++			logger:    logger,
++			options:   options,
++			叶子证书缓存: make(map[string]*tls.Certificate),
++		}, nil
++	}
++
++	// 校验 CA 配置完整性
++	if options.CA.Certificate == "" {
++		return nil, E.New("mitm: 缺少根证书文件路径 (ca.certificate)")
++	}
++	if options.CA.PrivateKey == "" {
++		return nil, E.New("mitm: 缺少根证书私钥文件路径 (ca.private_key)")
++	}
++
++	svc := &Service{
++		Adapter:      boxService.NewAdapter(C.TypeMITM, tag),
++		ctx:          ctx,
++		logger:       logger,
++		options:      options,
++		叶子证书缓存:  make(map[string]*tls.Certificate),
++	}
++
++	// 加载并验证根证书
++	if err := svc.加载根证书(); err != nil {
++		return nil, E.Cause(err, "mitm: 加载根证书失败")
++	}
++
++	// 将自身注册到上下文，供后续 TUN 拦截层获取
++	service.MustRegister[*Service](ctx, svc)
++
++	logger.Info("mitm: 服务初始化完成，根证书已加载")
++	return svc, nil
++}
++
++// 加载根证书 读取 PEM 格式的证书与私钥，验证其为合法 CA 证书
++func (s *Service) 加载根证书() error {
++	证书PEM, err := os.ReadFile(s.options.CA.Certificate)
++	if err != nil {
++		return E.Cause(err, "读取根证书文件失败: ", s.options.CA.Certificate)
++	}
++
++	私钥PEM, err := os.ReadFile(s.options.CA.PrivateKey)
++	if err != nil {
++		return E.Cause(err, "读取根证书私钥文件失败: ", s.options.CA.PrivateKey)
++	}
++
++	// 加载证书+私钥对
++	证书对, err := tls.X509KeyPair(证书PEM, 私钥PEM)
++	if err != nil {
++		return E.Cause(err, "解析根证书与私钥失败")
++	}
++
++	// 解析证书实体以验证 CA 属性
++	if len(证书对.Certificate) == 0 {
++		return E.New("根证书中不包含任何证书")
++	}
++	证书实体, err := x509.ParseCertificate(证书对.Certificate[0])
++	if err != nil {
++		return E.Cause(err, "解析根证书实体失败")
++	}
++	if !证书实体.IsCA {
++		return E.New("提供的证书不是 CA 证书 (IsCA=false)，无法用于签发叶子证书")
++	}
++	if (证书实体.KeyUsage & x509.KeyUsageCertSign) == 0 {
++		return E.New("提供的 CA 证书缺少 KeyUsageCertSign 权限，无法签发证书")
++	}
++
++	s.根证书 = &证书对
++	s.根证书实体 = 证书实体
++	return nil
++}
++
++// Start 实现 adapter.Lifecycle 接口
++// MITM 服务在第一阶段仅完成初始化，实际拦截逻辑在后续阶段接入 TUN 后启动。
++func (s *Service) Start(stage adapter.StartStage, scope *adapter.Scope) error {
++	if stage != adapter.StartStateStart {
++		return nil
++	}
++	if !s.options.Enabled {
++		s.logger.Info("mitm: 服务未启用，跳过启动")
++		return nil
++	}
++	s.logger.Info("mitm: 服务已启动")
++	return nil
++}
++
++// FromContext 从上下文中获取 MITM 服务实例
++// 供 TUN 入站等模块调用，判断是否需要拦截流量。
++func FromContext(ctx context.Context) *Service {
++	return service.FromContext[*Service](ctx)
++}
++
++// 是否启用 返回 MITM 服务是否已启用
++func (s *Service) 是否启用() bool {
++	return s.options.Enabled
++}
+diff --git a/service/mitm/service_test.go b/service/mitm/service_test.go
+new file mode 100644
+index 0000000..aec5352
+--- /dev/null
++++ b/service/mitm/service_test.go
+@@ -0,0 +1,240 @@
++package mitm
++
++import (
++	"context"
++	"crypto/ecdsa"
++	"crypto/elliptic"
++	"crypto/rand"
++	"crypto/x509"
++	"crypto/x509/pkix"
++	"encoding/pem"
++	"math/big"
++	"os"
++	"path/filepath"
++	"testing"
++	"time"
++
++	"github.com/sagernet/sing-box/adapter"
++	boxService "github.com/sagernet/sing-box/adapter/service"
++	"github.com/sagernet/sing-box/log"
++	"github.com/sagernet/sing-box/option"
++	"github.com/sagernet/sing/service"
++)
++
++// 生成测试用 CA 证书与私钥，返回 PEM 字节
++func 生成测试CA(t *testing.T) (证书PEM []byte, 私钥PEM []byte) {
++	t.Helper()
++	私钥, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
++	if err != nil {
++		t.Fatalf("生成私钥失败: %v", err)
++	}
++	模板 := &x509.Certificate{
++		SerialNumber: big.NewInt(1),
++		Subject:      pkix.Name{CommonName: "sing-box MITM 测试 CA"},
++		NotBefore:    time.Now().Add(-time.Hour),
++		NotAfter:     time.Now().Add(24 * time.Hour),
++		IsCA:         true,
++		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
++		BasicConstraintsValid: true,
++	}
++	证书DER, err := x509.CreateCertificate(rand.Reader, 模板, 模板, &私钥.PublicKey, 私钥)
++	if err != nil {
++		t.Fatalf("创建证书失败: %v", err)
++	}
++	证书PEM = pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: 证书DER})
++	私钥DER, err := x509.MarshalECPrivateKey(私钥)
++	if err != nil {
++		t.Fatalf("序列化私钥失败: %v", err)
++	}
++	私钥PEM = pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: 私钥DER})
++	return
++}
++
++// 写入临时文件并返回路径
++func 写入临时文件(t *testing.T, 内容 []byte) string {
++	t.Helper()
++	文件, err := os.CreateTemp("", "mitm-test-*")
++	if err != nil {
++		t.Fatalf("创建临时文件失败: %v", err)
++	}
++	defer 文件.Close()
++	if _, err := 文件.Write(内容); err != nil {
++		t.Fatalf("写入临时文件失败: %v", err)
++	}
++	t.Cleanup(func() { os.Remove(文件.Name()) })
++	return 文件.Name()
++}
++
++// 构造带 service 上下文的 context
++func 构造上下文() context.Context {
++	ctx := context.Background()
++	ctx = service.ContextWith(ctx, boxService.NewRegistry())
++	return ctx
++}
++
++// TestNewService_未启用 验证未启用时不加载证书也能创建服务
++func TestNewService_未启用(t *testing.T) {
++	ctx := 构造上下文()
++	logger := log.NewNOPFactory().Logger()
++	svc, err := NewService(ctx, logger, "mitm", option.MITMServiceOptions{Enabled: false})
++	if err != nil {
++		t.Fatalf("未启用时创建服务不应失败: %v", err)
++	}
++	if svc == nil {
++		t.Fatal("服务实例不应为 nil")
++	}
++	if svc.Type() != "mitm" {
++		t.Errorf("服务类型应为 mitm，实际: %s", svc.Type())
++	}
++	if svc.Tag() != "mitm" {
++		t.Errorf("服务标签应为 mitm，实际: %s", svc.Tag())
++	}
++}
++
++// TestNewService_缺少证书路径 验证缺少 CA 配置时返回错误
++func TestNewService_缺少证书路径(t *testing.T) {
++	ctx := 构造上下文()
++	logger := log.NewNOPFactory().Logger()
++	_, err := NewService(ctx, logger, "mitm", option.MITMServiceOptions{Enabled: true})
++	if err == nil {
++		t.Fatal("缺少证书路径时应返回错误")
++	}
++}
++
++// TestNewService_缺少私钥路径 验证缺少私钥时返回错误
++func TestNewService_缺少私钥路径(t *testing.T) {
++	ctx := 构造上下文()
++	logger := log.NewNOPFactory().Logger()
++	_, err := NewService(ctx, logger, "mitm", option.MITMServiceOptions{
++		Enabled: true,
++		CA: option.MITMCAOptions{Certificate: "/tmp/不存在的证书.pem"},
++	})
++	if err == nil {
++		t.Fatal("缺少私钥路径时应返回错误")
++	}
++}
++
++// TestNewService_加载合法CA 验证合法 CA 证书能正常加载
++func TestNewService_加载合法CA(t *testing.T) {
++	证书PEM, 私钥PEM := 生成测试CA(t)
++	证书路径 := 写入临时文件(t, 证书PEM)
++	私钥路径 := 写入临时文件(t, 私钥PEM)
++
++	ctx := 构造上下文()
++	logger := log.NewNOPFactory().Logger()
++	svc, err := NewService(ctx, logger, "mitm", option.MITMServiceOptions{
++		Enabled: true,
++		CA: option.MITMCAOptions{
++			Certificate: 证书路径,
++			PrivateKey:  私钥路径,
++		},
++	})
++	if err != nil {
++		t.Fatalf("加载合法 CA 应成功: %v", err)
++	}
++	实际服务 := svc.(*Service)
++	if 实际服务.根证书 == nil {
++		t.Fatal("根证书不应为 nil")
++	}
++	if 实际服务.根证书实体 == nil {
++		t.Fatal("根证书实体不应为 nil")
++	}
++	if !实际服务.根证书实体.IsCA {
++		t.Error("根证书应为 CA 证书")
++	}
++}
++
++// TestNewService_非CA证书被拒绝 验证非 CA 证书会被拒绝
++func TestNewService_非CA证书被拒绝(t *testing.T) {
++	// 生成一个非 CA 的叶子证书
++	私钥, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
++	模板 := &x509.Certificate{
++		SerialNumber:          big.NewInt(2),
++		Subject:               pkix.Name{CommonName: "非CA证书"},
++		NotBefore:             time.Now().Add(-time.Hour),
++		NotAfter:              time.Now().Add(time.Hour),
++		IsCA:                  false,
++		BasicConstraintsValid: true,
++	}
++	证书DER, _ := x509.CreateCertificate(rand.Reader, 模板, 模板, &私钥.PublicKey, 私钥)
++	证书PEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: 证书DER})
++	私钥DER, _ := x509.MarshalECPrivateKey(私钥)
++	私钥PEM := pem.EncodeToMemory(&pem.Block{Type: "EC PRIVATE KEY", Bytes: 私钥DER})
++
++	证书路径 := 写入临时文件(t, 证书PEM)
++	私钥路径 := 写入临时文件(t, 私钥PEM)
++
++	ctx := 构造上下文()
++	logger := log.NewNOPFactory().Logger()
++	_, err := NewService(ctx, logger, "mitm", option.MITMServiceOptions{
++		Enabled: true,
++		CA: option.MITMCAOptions{
++			Certificate: 证书路径,
++			PrivateKey:  私钥路径,
++		},
++	})
++	if err == nil {
++		t.Fatal("非 CA 证书应被拒绝")
++	}
++}
++
++// TestStart_生命周期 验证 Start 方法在各阶段正常返回
++func TestStart_生命周期(t *testing.T) {
++	ctx := 构造上下文()
++	logger := log.NewNOPFactory().Logger()
++	svc, _ := NewService(ctx, logger, "mitm", option.MITMServiceOptions{Enabled: false})
++	scope := adapter.NewScope(ctx, logger)
++	for _, stage := range adapter.ListStartStages {
++		if err := svc.Start(stage, scope); err != nil {
++			t.Fatalf("Start 阶段 %v 不应失败: %v", stage, err)
++		}
++	}
++}
++
++// TestRegisterService 验证服务注册后能从注册表创建 options
++func TestRegisterService(t *testing.T) {
++	registry := boxService.NewRegistry()
++	RegisterService(registry)
++	类型列表 := registry.OptionTypes()
++	找到 := false
++	for _, typ := range 类型列表 {
++		if typ == "mitm" {
++			找到 = true
++		}
++	}
++	if !找到 {
++		t.Errorf("注册表中应包含 mitm 类型，实际: %v", 类型列表)
++	}
++	options, 存在 := registry.CreateOptions("mitm")
++	if !存在 {
++		t.Fatal("应能创建 mitm options")
++	}
++	if _, ok := options.(*option.MITMServiceOptions); !ok {
++		t.Errorf("options 类型应为 *MITMServiceOptions，实际: %T", options)
++	}
++}
++
++// TestFromContext 验证服务能从上下文获取
++func TestFromContext(t *testing.T) {
++	ctx := 构造上下文()
++	logger := log.NewNOPFactory().Logger()
++	svc, _ := NewService(ctx, logger, "mitm", option.MITMServiceOptions{Enabled: false})
++	// 未启用时不会注册到上下文，应返回 nil
++	if FromContext(ctx) != nil {
++		t.Error("未启用的服务不应注册到上下文")
++	}
++	// 启用时会注册
++	证书PEM, 私钥PEM := 生成测试CA(t)
++	证书路径 := 写入临时文件(t, 证书PEM)
++	私钥路径 := 写入临时文件(t, 私钥PEM)
++	ctx2 := 构造上下文()
++	_, _ = NewService(ctx2, logger, "mitm", option.MITMServiceOptions{
++		Enabled: true,
++		CA:      option.MITMCAOptions{Certificate: 证书路径, PrivateKey: 私钥路径},
++	})
++	if FromContext(ctx2) == nil {
++		t.Error("启用的服务应能从上下文获取")
++	}
++	_ = svc
++	_ = filepath.Join
++}
