@@ -183,8 +183,8 @@ open class ExtensionProvider: NEPacketTunnelProvider {
 }
 
 extension ExtensionProvider: LibboxCommandServerHandlerProtocol {
-    public func connectSSHAgent() throws -> Int32 {
-        0
+    public func connectSSHAgent(ret0_: UnsafeMutablePointer<Int32>?) throws {
+        ret0_?.pointee = 0
     }
 
     public func getSystemProxyStatus() throws -> LibboxSystemProxyStatus {
