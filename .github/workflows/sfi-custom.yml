@@ -42,7 +42,7 @@ jobs:
       - name: 检出定制 sing-box 内核
         run: |
           echo "=== 检出定制 sing-box 内核（含 MITM 模块）==="
-          git clone --depth 1 --branch sing-box https://github.com/lambret-1/MITM.git sing-box-custom
+          git clone --depth 1 --branch MITM https://github.com/lambret-1/MITM.git sing-box-custom
           cd sing-box-custom
           go version
           ls experimental/libbox/
