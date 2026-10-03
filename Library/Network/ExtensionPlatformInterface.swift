@@ -348,7 +348,7 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         #endif
     }
 
-    public func getSystemProxyStatus() -> LibboxSystemProxyStatus {
+    public func getSystemProxyStatus() throws -> LibboxSystemProxyStatus {
         let status = LibboxSystemProxyStatus()
         guard let networkSettings else {
             return status
