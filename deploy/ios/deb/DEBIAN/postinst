@@ -1,0 +1,82 @@
+#!/bin/bash
+# SB1 MITM 安装后脚本
+# 功能：设置权限、提示用户安装 CA 描述文件
+# CA 证书已随 deb 包预生成并安装，无需运行 sing-box
+# 注意：不使用 set -e，任何步骤失败不中止安装
+
+# 检测越狱环境，确定前缀
+if [ -d "/var/jb" ]; then
+    PREFIX="/var/jb"
+    echo "检测到多巴胺 Dopamine 越狱环境，使用 /var/jb/ 前缀"
+else
+    PREFIX=""
+    echo "使用标准根路径"
+fi
+
+BIN_PATH="${PREFIX}/usr/bin/sing-box"
+CONFIG_DIR="${PREFIX}/etc/sing-box"
+CA_CERT="$CONFIG_DIR/ca.pem"
+CA_KEY="$CONFIG_DIR/ca.key"
+LAUNCHDAEMON="${PREFIX}/Library/LaunchDaemons/com.sb1.mitm.plist"
+
+echo "========================================"
+echo "  SB1 MITM 安装后配置"
+echo "========================================"
+
+# 设置文件权限
+echo "[1/3] 设置文件权限..."
+chmod 755 "$BIN_PATH" 2>/dev/null || true
+chown root:wheel "$BIN_PATH" 2>/dev/null || true
+chmod 644 "$CONFIG_DIR/config.json" 2>/dev/null || true
+chown root:wheel "$CONFIG_DIR/config.json" 2>/dev/null || true
+chmod 644 "$CA_CERT" 2>/dev/null || true
+chmod 600 "$CA_KEY" 2>/dev/null || true
+chown root:wheel "$CA_CERT" "$CA_KEY" 2>/dev/null || true
+chmod 644 "$LAUNCHDAEMON" 2>/dev/null || true
+chown root:wheel "$LAUNCHDAEMON" 2>/dev/null || true
+echo "  权限设置完成"
+
+# 检查 CA 证书（已随包安装，仅提示）
+echo "[2/3] 检查 CA 证书..."
+if [ -f "$CA_CERT" ] && [ -f "$CA_KEY" ]; then
+    echo "  CA 证书已安装: $CA_CERT"
+else
+    echo "  警告：CA 证书缺失，MITM 功能将无法工作"
+    echo "  请手动执行: $BIN_PATH generate mitm-ca --name \"SB1 MITM CA\" --output $CONFIG_DIR"
+fi
+
+# 复制 CA 证书到用户可访问位置
+echo "[3/3] 准备 CA 描述文件..."
+if [ -f "$CA_CERT" ]; then
+    cp "$CA_CERT" /var/mobile/Documents/sb1-mitm-ca.pem 2>/dev/null || true
+    chown mobile:mobile /var/mobile/Documents/sb1-mitm-ca.pem 2>/dev/null || true
+    echo "  CA 证书已复制到 /var/mobile/Documents/sb1-mitm-ca.pem"
+fi
+
+echo ""
+echo "========================================"
+echo "  安装完成！"
+echo "========================================"
+echo ""
+echo "【重要】请完成以下步骤启用 MITM："
+echo ""
+echo "1. 安装 CA 证书到系统信任存储："
+echo "   - 打开「文件」App → 浏览 → 我的iPhone"
+echo "   - 找到 sb1-mitm-ca.pem 并点击"
+echo "   - 设置 → 通用 → VPN与设备管理 → 安装描述文件"
+echo "   - 设置 → 通用 → 关于本机 → 证书信任设置 → 启用 SB1 MITM CA"
+echo ""
+echo "2. 启动服务："
+echo "   launchctl load $LAUNCHDAEMON"
+echo ""
+echo "3. 查看日志："
+echo "   tail -f /var/log/sing-box.log"
+echo ""
+echo "4. 停止服务："
+echo "   launchctl unload $LAUNCHDAEMON"
+echo ""
+echo "默认匹配域名: example.com, example.org"
+echo "配置文件: $CONFIG_DIR/config.json"
+echo "========================================"
+
+exit 0

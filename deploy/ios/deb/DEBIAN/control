@@ -1,0 +1,14 @@
+Package: com.sb1.mitm
+Name: SB1 MITM
+Version: 1.11.0-1
+Architecture: iphoneos-arm64
+Description: sing-box HTTPS MITM 模块 - iOS 越狱版
+  基于 sing-box testing 分支的 HTTPS 中间人攻击模块
+  支持 TLS 终止、HTTP/1.1+HTTP/2+WebSocket、请求/响应重写
+  适用于多巴胺(Dopamine)、palera1n、checkra1n 等越狱环境
+Maintainer: SB1 MITM
+Author: SB1 MITM
+Section: Networking
+Priority: optional
+Depends: firmware (>= 15.0)
+Homepage: https://github.com/lambret-1/MITM

@@ -1,0 +1,18 @@
+#!/bin/bash
+# SB1 MITM 安装前脚本
+# 极度简化：仅做环境检测，不做任何可能失败的操作
+# 所有文件安装到 /var/jb/（多巴胺可写区域），dpkg 自动处理路径映射
+
+echo "=== SB1 MITM 安装前准备 ==="
+
+# 检测越狱环境
+if [ -d "/var/jb" ]; then
+    echo "检测到 Rootless 环境（多巴胺 Dopamine），使用 /var/jb/ 前缀"
+else
+    echo "Rootful 环境"
+fi
+
+echo "准备完成，开始安装..."
+echo "=========================="
+
+exit 0

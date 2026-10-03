@@ -1,0 +1,58 @@
+{
+  "log": {
+    "level": "info",
+    "output": "/var/log/sing-box.log",
+    "timestamp": true
+  },
+  "inbounds": [
+    {
+      "type": "tun",
+      "tag": "tun-in",
+      "interface_name": "utun9",
+      "address": "198.18.0.1/30",
+      "auto_route": true,
+      "strict_route": false
+    }
+  ],
+  "outbounds": [
+    {
+      "type": "direct",
+      "tag": "direct"
+    }
+  ],
+  "route": {
+    "default_interface": "en0",
+    "rules": [
+      {
+        "domain_suffix": ["example.com"],
+        "outbound": "direct"
+      }
+    ]
+  },
+  "services": [
+    {
+      "type": "mitm",
+      "tag": "mitm",
+      "enabled": true,
+      "ca": {
+        "certificate": "/var/jb/etc/sing-box/ca.pem",
+        "private_key": "/var/jb/etc/sing-box/ca.key"
+      },
+      "match": {
+        "domain_suffix": ["example.com", "example.net"]
+      },
+      "rewrite": {
+        "enabled": true,
+        "max_body_size": 10485760,
+        "rules": [
+          {
+            "domain_suffix": ["example.com"],
+            "response_header": {"X-MITM": "sing-box"}
+          }
+        ]
+      },
+      "on_error": "bypass",
+      "upstream_timeout": 30
+    }
+  ]
+}

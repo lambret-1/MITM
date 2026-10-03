@@ -1,0 +1,106 @@
+name: MITM CI
+
+on:
+  push:
+    branches:
+      - sing-box
+    paths-ignore:
+      - '**.md'
+  pull_request:
+    branches:
+      - sing-box
+  workflow_dispatch:
+
+concurrency:
+  group: mitm-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.25.5"
+
+jobs:
+  build-and-test:
+    name: 编译与测试
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 显示 Go 版本
+        run: go version
+
+      - name: 编译 sing-box 主程序
+        run: |
+          go build -o singbox ./cmd/sing-box
+          ls -lh singbox
+          ./singbox version
+
+      - name: 编译全部包（排除 experimental 平台限制包）
+        run: |
+          go build $(go list ./... | grep -v '/experimental/')
+
+      - name: 运行 MITM 模块单元测试
+        run: go test -v ./protocol/mitm/...
+
+      - name: 运行相关模块测试
+        run: go test -v ./option/... ./constant/... ./include/... ./adapter/...
+
+      - name: 生成测试 CA 证书
+        run: |
+          openssl req -x509 -newkey rsa:2048 -keyout /tmp/mitm-ca.key -out /tmp/mitm-ca.pem \
+            -days 3650 -nodes -subj "/CN=MITM CI Test CA" \
+            -addext "basicConstraints=critical,CA:TRUE" \
+            -addext "keyUsage=critical,keyCertSign"
+
+      - name: 验证 MITM 配置解析
+        run: |
+          cat > /tmp/mitm-config.json << 'CONFIG'
+          {
+            "log": {"level": "info"},
+            "inbounds": [{"type": "direct", "tag": "direct-in"}],
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+            "services": [
+              {
+                "type": "mitm",
+                "tag": "mitm",
+                "enabled": true,
+                "ca": {
+                  "certificate": "/tmp/mitm-ca.pem",
+                  "private_key": "/tmp/mitm-ca.key"
+                },
+                "match": {"domain_suffix": ["example.com"]},
+                "rewrite": {"enabled": true}
+              }
+            ]
+          }
+          CONFIG
+          ./singbox check -c /tmp/mitm-config.json
+          echo "配置校验通过"
+
+      - name: 验证未启用 MITM 配置
+        run: |
+          cat > /tmp/mitm-disabled.json << 'CONFIG'
+          {
+            "log": {"level": "info"},
+            "inbounds": [{"type": "direct", "tag": "direct-in"}],
+            "outbounds": [{"type": "direct", "tag": "direct"}],
+            "services": [
+              {"type": "mitm", "tag": "mitm", "enabled": false}
+            ]
+          }
+          CONFIG
+          ./singbox check -c /tmp/mitm-disabled.json
+          echo "未启用配置校验通过"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: singbox-mitm-linux-amd64
+          path: singbox
+          retention-days: 7

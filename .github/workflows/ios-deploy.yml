@@ -1,0 +1,272 @@
+name: iOS 部署包构建
+
+on:
+  push:
+    branches:
+      - sing-box
+    paths:
+      - 'protocol/mitm/**'
+      - 'option/mitm.go'
+      - 'deploy/ios/**'
+      - 'cmd/sing-box/cmd_generate_mitm_ca.go'
+      - '.github/workflows/ios-deploy.yml'
+  workflow_dispatch:
+    inputs:
+      create_release:
+        description: '是否创建 GitHub Release'
+        required: false
+        default: 'false'
+        type: choice
+        options:
+          - 'false'
+          - 'true'
+
+concurrency:
+  group: ios-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.25.5"
+  DEPLOY_DIR: "deploy/ios"
+  PACKAGE_NAME: "sing-box-mitm-ios-deploy"
+  DEB_FILE: "com.sb1.mitm_1.11.0-1_iphoneos-arm64.deb"
+
+jobs:
+  build-ios-package:
+    name: 构建 iOS 越狱部署包
+    runs-on: macos-14
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+
+      - name: 显示 Go 版本
+        run: go version
+
+      - name: 原生构建（生成 CA 证书）
+        run: |
+          echo "=== 原生构建 darwin/arm64 ==="
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 \
+            go build \
+            -o sing-box-native \
+            -trimpath \
+            -ldflags="-s -w" \
+            ./cmd/sing-box
+          file sing-box-native
+          echo "=== 生成 MITM CA 证书 ==="
+          mkdir -p ca-out
+          ./sing-box-native generate mitm-ca \
+            --name "SB1 MITM CA" \
+            --validity 3650 \
+            --output ca-out
+          ls -la ca-out/
+          # 验证 CA 是合法 CA 证书
+          openssl x509 -in ca-out/ca.pem -text | grep -A1 "Basic Constraints" | head -5
+
+      - name: 交叉编译 iOS/arm64 二进制
+        run: |
+          echo "=== 交叉编译 iOS/arm64（使用 Xcode iPhoneOS SDK）==="
+          SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
+          echo "SDKROOT=$SDKROOT"
+          export SDKROOT
+          export CGO_ENABLED=1
+          export GOOS=ios
+          export GOARCH=arm64
+          go build \
+            -o sing-box-ios \
+            -trimpath \
+            -ldflags="-s -w" \
+            ./cmd/sing-box
+          echo "=== 编译完成 ==="
+          ls -lh sing-box-ios
+          file sing-box-ios
+
+      - name: 安装 ldid 并签名
+        run: |
+          echo "=== 安装 ldid ==="
+          brew install ldid || true
+          echo "=== ldid 伪签名（越狱环境无需 Apple 证书）==="
+          ldid -S sing-box-ios
+          codesign -v sing-box-ios 2>/dev/null || echo "（ldid 签名完成，codesign 验证跳过）"
+          ls -lh sing-box-ios
+
+      - name: 验证二进制格式
+        run: |
+          echo "=== 验证 Mach-O 格式 ==="
+          FILE_OUTPUT=$(file sing-box-ios)
+          echo "$FILE_OUTPUT"
+          echo "$FILE_OUTPUT" | grep -q "Mach-O 64-bit" && echo "✅ Mach-O 64-bit 格式正确" || { echo "❌ 格式错误"; exit 1; }
+          echo "$FILE_OUTPUT" | grep -q "arm64" && echo "✅ arm64 架构正确" || { echo "❌ 架构错误"; exit 1; }
+          test -s sing-box-ios && echo "✅ 二进制非空" || { echo "❌ 二进制为空"; exit 1; }
+
+      - name: 组装部署包
+        run: |
+          echo "=== 组装部署包目录 ==="
+          mkdir -p ${{ env.PACKAGE_NAME }}/{bin,config,launchdaemon,ca}
+
+          # 二进制
+          cp sing-box-ios ${{ env.PACKAGE_NAME }}/bin/sing-box
+          chmod 755 ${{ env.PACKAGE_NAME }}/bin/sing-box
+
+          # 配置文件
+          cp ${{ env.DEPLOY_DIR }}/config/config.json ${{ env.PACKAGE_NAME }}/config/
+          chmod 644 ${{ env.PACKAGE_NAME }}/config/config.json
+
+          # LaunchDaemon
+          cp ${{ env.DEPLOY_DIR }}/com.sb1.mitm.plist ${{ env.PACKAGE_NAME }}/launchdaemon/
+          chmod 644 ${{ env.PACKAGE_NAME }}/launchdaemon/com.sb1.mitm.plist
+
+          # CA 证书（预生成）
+          cp ca-out/ca.pem ${{ env.PACKAGE_NAME }}/ca/
+          cp ca-out/ca.key ${{ env.PACKAGE_NAME }}/ca/
+          chmod 644 ${{ env.PACKAGE_NAME }}/ca/ca.pem
+          chmod 600 ${{ env.PACKAGE_NAME }}/ca/ca.key
+
+          # 安装脚本
+          cp ${{ env.DEPLOY_DIR }}/install.sh ${{ env.PACKAGE_NAME }}/
+          chmod 755 ${{ env.PACKAGE_NAME }}/install.sh
+
+          # 构建脚本
+          cp ${{ env.DEPLOY_DIR }}/build-ios.sh ${{ env.PACKAGE_NAME }}/
+          chmod 755 ${{ env.PACKAGE_NAME }}/build-ios.sh
+
+          # 文档
+          cp ${{ env.DEPLOY_DIR }}/README.md ${{ env.PACKAGE_NAME }}/README.md 2>/dev/null || true
+          cp ${{ env.DEPLOY_DIR }}/README-实测指南.md ${{ env.PACKAGE_NAME }}/README-实测指南.md 2>/dev/null || true
+
+          echo "=== 部署包目录结构 ==="
+          find ${{ env.PACKAGE_NAME }} -type f | sort
+          echo "=== 目录大小 ==="
+          du -sh ${{ env.PACKAGE_NAME }}
+
+      - name: 组装 .deb 安装包
+        run: |
+          echo "=== 组装 .deb 安装包 ==="
+          DEB_DIR="${{ env.DEPLOY_DIR }}/deb"
+
+          # 复制二进制（ldid 已签名）
+          cp sing-box-ios "$DEB_DIR/var/jb/usr/bin/sing-box"
+          chmod 755 "$DEB_DIR/var/jb/usr/bin/sing-box"
+
+          # 复制预生成 CA 证书
+          cp ca-out/ca.pem "$DEB_DIR/var/jb/etc/sing-box/ca.pem"
+          cp ca-out/ca.key "$DEB_DIR/var/jb/etc/sing-box/ca.key"
+          chmod 644 "$DEB_DIR/var/jb/etc/sing-box/ca.pem"
+          chmod 600 "$DEB_DIR/var/jb/etc/sing-box/ca.key"
+
+          # 设置权限
+          chmod 755 "$DEB_DIR/DEBIAN/preinst" "$DEB_DIR/DEBIAN/postinst" "$DEB_DIR/DEBIAN/prerm" "$DEB_DIR/DEBIAN/postrm"
+          chmod 644 "$DEB_DIR/DEBIAN/control"
+          chmod 644 "$DEB_DIR/var/jb/etc/sing-box/config.json"
+          chmod 644 "$DEB_DIR/var/jb/Library/LaunchDaemons/com.sb1.mitm.plist"
+
+          # 手动构建 .deb（macOS 无 dpkg-deb，用 ar + tar.gz，gzip 兼容 iOS 旧版 dpkg）
+          echo "=== 手动构建 .deb（ar + tar.gz）==="
+          TMP_DIR=$(mktemp -d)
+          echo "2.0" > "$TMP_DIR/debian-binary"
+          tar -czf "$TMP_DIR/control.tar.gz" -C "$DEB_DIR/DEBIAN" .
+          tar -czf "$TMP_DIR/data.tar.gz" -C "$DEB_DIR" ./var
+          ar r "${{ env.DEB_FILE }}" \
+            "$TMP_DIR/debian-binary" \
+            "$TMP_DIR/control.tar.gz" \
+            "$TMP_DIR/data.tar.gz"
+          rm -rf "$TMP_DIR"
+
+          ls -lh "${{ env.DEB_FILE }}"
+          echo "=== deb 包内容 ==="
+          tar -tzf <(ar p "${{ env.DEB_FILE }}" data.tar.gz) 2>/dev/null || ar p "${{ env.DEB_FILE }}" data.tar.gz | tar -tz
+          echo "DEB_FILE=${{ env.DEB_FILE }}" >> $GITHUB_ENV
+
+      - name: 打包 tar.gz
+        run: |
+          echo "=== 打包 ==="
+          tar -czf ${{ env.PACKAGE_NAME }}.tar.gz ${{ env.PACKAGE_NAME }}/
+          ls -lh ${{ env.PACKAGE_NAME }}.tar.gz
+
+      - name: 上传 .deb 安装包 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-mitm-ios-deb
+          path: ${{ env.DEB_FILE }}
+          retention-days: 30
+
+      - name: 上传部署包 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}
+          path: |
+            ${{ env.PACKAGE_NAME }}.tar.gz
+            ${{ env.PACKAGE_NAME }}/
+          retention-days: 30
+
+      - name: 上传单独二进制 Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sing-box-ios-arm64
+          path: sing-box-ios
+          retention-days: 30
+
+      - name: 创建 GitHub Release
+        if: ${{ github.event.inputs.create_release == 'true' || github.ref == 'refs/heads/sing-box' && contains(github.event.head_commit.message, 'release') }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ios-deploy-${{ github.sha }}
+          name: "iOS 部署包 ${{ github.sha }}"
+          body: |
+            ## SB1 MITM iOS 越狱部署包
+
+            **构建信息：**
+            - Commit: ${{ github.sha }}
+            - Go 版本: ${{ env.GO_VERSION }}
+            - 目标平台: iOS/arm64（真正的 iOS 二进制，非 darwin）
+            - 签名: ldid 伪签名（越狱环境直接运行）
+            - 构建时间: ${{ github.event.head_commit.timestamp }}
+
+            **安装包下载：**
+            - `com.sb1.mitm_1.11.0-1_iphoneos-arm64.deb` — .deb 安装包（推荐，无需电脑，Filza/Sileo/Cydia 直接安装）
+            - `sing-box-mitm-ios-deploy.tar.gz` — 手动部署包（含安装脚本）
+            - `sing-box-ios` — 单独二进制（已 ldid 签名）
+
+            **支持的越狱环境：**
+            - 多巴胺 Dopamine (iOS 15.0-16.5.1, arm64e)
+            - palera1n (iOS 15.0-16.x, arm64)
+            - checkra1n (iOS 12.0-14.8, arm64)
+            - 其他基于 Substitute/libhooker 的越狱环境
+
+            **.deb 安装方式（无需电脑）：**
+            1. 在 iOS 设备上用 Safari 下载 .deb 文件
+            2. 打开 Filza 文件管理器，找到下载的 .deb
+            3. 点击文件，选择「安装」
+            4. CA 证书已随包安装，直接按提示完成信任设置
+            5. 终端执行: launchctl load /var/jb/Library/LaunchDaemons/com.sb1.mitm.plist
+
+            **手动部署方式：**
+            \`\`\`bash
+            scp sing-box-mitm-ios-deploy.tar.gz root@<设备IP>:/var/root/
+            ssh root@<设备IP>
+            tar -xzf sing-box-mitm-ios-deploy.tar.gz
+            cd sing-box-mitm-ios-deploy
+            ./install.sh
+            \`\`\`
+
+            **部署包内容：**
+            - `bin/sing-box` — 预编译二进制（iOS arm64，已 ldid 签名）
+            - `config/config.json` — TUN + MITM 配置模板
+            - `ca/` — 预生成的 MITM CA 证书（ca.pem + ca.key）
+            - `launchdaemon/com.sb1.mitm.plist` — 开机自启配置
+            - `install.sh` — 一键安装脚本
+            - `build-ios.sh` — 交叉编译脚本
+            - `README-实测指南.md` — 完整实测指南
+          files: |
+            ${{ env.DEB_FILE }}
+            ${{ env.PACKAGE_NAME }}.tar.gz
+            sing-box-ios
+          draft: false
+          prerelease: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

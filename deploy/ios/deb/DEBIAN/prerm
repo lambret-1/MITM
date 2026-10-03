@@ -1,0 +1,27 @@
+#!/bin/bash
+# SB1 MITM 卸载前脚本
+# 功能：停止服务、卸载 LaunchDaemon
+
+# 检测越狱环境，确定前缀
+if [ -d "/var/jb" ]; then
+    PREFIX="/var/jb"
+else
+    PREFIX=""
+fi
+
+LAUNCHDAEMON="${PREFIX}/Library/LaunchDaemons/com.sb1.mitm.plist"
+
+echo "正在停止 SB1 MITM 服务..."
+
+# 停止并卸载 LaunchDaemon
+if [ -f "$LAUNCHDAEMON" ]; then
+    launchctl unload "$LAUNCHDAEMON" 2>/dev/null || true
+    echo "  LaunchDaemon 已卸载"
+fi
+
+# 等待进程退出
+sleep 1
+killall sing-box 2>/dev/null || true
+
+echo "SB1 MITM 服务已停止"
+exit 0

@@ -1,0 +1,32 @@
+#!/bin/bash
+# SB1 MITM 卸载后脚本
+# 功能：清理配置文件和日志
+
+# 检测越狱环境，确定前缀
+if [ -d "/var/jb" ]; then
+    PREFIX="/var/jb"
+else
+    PREFIX=""
+fi
+
+CONFIG_DIR="${PREFIX}/etc/sing-box"
+
+echo "正在清理 SB1 MITM 文件..."
+
+# 删除配置目录
+if [ -d "$CONFIG_DIR" ]; then
+    rm -f "$CONFIG_DIR/config.json"
+    rm -f /var/log/sing-box.log /var/log/sing-box.err.log 2>/dev/null || true
+    echo "  配置和日志已清理"
+fi
+
+# 删除用户目录中的 CA 副本
+rm -f /var/mobile/Documents/sb1-mitm-ca.pem 2>/dev/null || true
+
+echo ""
+echo "SB1 MITM 已卸载"
+echo "如需完全移除，请手动删除："
+echo "  - $CONFIG_DIR/ 目录（含 CA 证书）"
+echo "  - 设置 → 通用 → VPN与设备管理 → 删除 SB1 MITM CA 描述文件"
+
+exit 0

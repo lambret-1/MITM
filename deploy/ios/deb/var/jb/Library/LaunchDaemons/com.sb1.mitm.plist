@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  sing-box MITM LaunchDaemon 配置
+  适用于多巴胺 Dopamine / palera1n / checkra1n 等越狱环境。
+  安装路径使用 /var/jb/ 前缀（多巴胺可写区域），系统通过绑定挂载映射到根路径。
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.sb1.mitm</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/var/jb/usr/bin/sing-box</string>
+        <string>run</string>
+        <string>-c</string>
+        <string>/var/jb/etc/sing-box/config.json</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/var/jb/etc/sing-box</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>StandardOutPath</key>
+    <string>/var/log/sing-box.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/var/log/sing-box.err.log</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/var/jb/usr/local/sbin:/var/jb/usr/local/bin:/var/jb/usr/sbin:/var/jb/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin</string>
+        <key>TZ</key>
+        <string>Asia/Shanghai</string>
+    </dict>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>
