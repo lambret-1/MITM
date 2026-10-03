@@ -1,0 +1,114 @@
+name: 构建 SFI 未签名 IPA
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - iOS
+    paths:
+      - 'sing-box.xcodeproj/**'
+      - 'SFI/**'
+      - 'Extension/**'
+      - 'IntentsExtension/**'
+      - 'WidgetExtension/**'
+      - 'Library/**'
+      - 'ApplicationLibrary/**'
+      - 'Libbox.xcframework/**'
+      - '.github/workflows/build-ipa.yml'
+
+env:
+  SCHEME: "SFI"
+  PROJECT: "sing-box.xcodeproj"
+  EXPORT_CONFIG: "build/ExportOptions.plist"
+
+jobs:
+  build-ipa:
+    name: 构建未签名 IPA
+    runs-on: macos-15
+    timeout-minutes: 60
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+          submodules: recursive
+
+      - name: 显示 Xcode 版本
+        run: |
+          xcodebuild -version
+          xcodebuild -showsdks
+
+      - name: 解析 SPM 依赖
+        run: |
+          xcodebuild -resolvePackageDependencies \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}"
+
+      - name: 创建导出配置
+        run: |
+          mkdir -p build
+          cat > "${{ env.EXPORT_CONFIG }}" << 'PLIST'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>compileBitcode</key>
+            <false/>
+            <key>destination</key>
+            <string>export</string>
+            <key>signingStyle</key>
+            <string>manual</string>
+            <key>signingCertificate</key>
+            <string>-</string>
+            <key>method</key>
+            <string>development</string>
+            <key>stripSwiftSymbols</key>
+            <true/>
+            <key>thinning</key>
+            <string>&lt;none&gt;</string>
+          </dict>
+          </plist>
+          PLIST
+          cat "${{ env.EXPORT_CONFIG }}"
+
+      - name: Archive 构建
+        run: |
+          xcodebuild archive \
+            -project "${{ env.PROJECT }}" \
+            -scheme "${{ env.SCHEME }}" \
+            -configuration Release \
+            -archivePath build/SFI.xcarchive \
+            -destination 'generic/platform=iOS' \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGN_ENTITLEMENTS="" \
+            EXPANDED_CODE_SIGN_IDENTITY="" \
+            EXPANDED_PROVISIONING_PROFILE_SPECIFIER="" \
+            | xcpretty || true
+
+      - name: 验证 Archive
+        run: |
+          ls -lh build/SFI.xcarchive/Products/Applications/
+          test -d build/SFI.xcarchive/Products/Applications/SFI.app && echo "✅ SFI.app 存在" || { echo "❌ SFI.app 缺失"; exit 1; }
+
+      - name: 导出 IPA
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath build/SFI.xcarchive \
+            -exportOptionsPlist "${{ env.EXPORT_CONFIG }}" \
+            -exportPath build/ipa \
+            | xcpretty || true
+
+      - name: 验证 IPA
+        run: |
+          ls -lh build/ipa/
+          test -f build/ipa/SFI.ipa && echo "✅ SFI.ipa 已生成" || { echo "❌ IPA 缺失"; exit 1; }
+
+      - name: 上传 IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SFI-unsigned-ipa
+          path: build/ipa/SFI.ipa
+          retention-days: 30
