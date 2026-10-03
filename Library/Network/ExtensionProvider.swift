@@ -190,7 +190,6 @@ extension ExtensionProvider: LibboxCommandServerHandlerProtocol {
     public func getSystemProxyStatus() throws -> LibboxSystemProxyStatus! {
         platformInterface!.getSystemProxyStatus()
     }
-
     public func serviceReload() throws {
         Task {
             await self.reloadService()

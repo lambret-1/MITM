@@ -205,7 +205,7 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
 
     public func autoDetectControl(_: Int32) throws {}
 
-    public func findConnectionOwner(_: Int32, sourceAddress _: String?, sourcePort _: Int32, destinationAddress _: String?, destinationPort _: Int32) throws -> LibboxConnectionOwner! {
+    public func findConnectionOwner(_: Int32, sourceAddress _: String?, sourcePort _: Int32, destinationAddress _: String?, destinationPort _: Int32) -> LibboxConnectionOwner! {
         nil
     }
     public func useProcFS() -> Bool {
@@ -427,11 +427,11 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         false
     }
 
-    public func openShellSession(_: LibboxPlatformUser?, command _: String?, environ _: (any LibboxStringIteratorProtocol)?, term _: String?, rows _: Int32, cols _: Int32) throws -> (any LibboxShellSessionProtocol)! {
+    public func openShellSession(_: LibboxPlatformUser?, command _: String?, environ _: (any LibboxStringIteratorProtocol)?, term _: String?, rows _: Int32, cols _: Int32) -> (any LibboxShellSessionProtocol)! {
         nil
     }
 
-    public func lookupUser(_: String?) throws -> LibboxPlatformUser! {
+    public func lookupUser(_: String?) -> LibboxPlatformUser! {
         nil
     }
 
@@ -447,7 +447,7 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         false
     }
 
-    public func createAutoRedirect(_: Data?, handler _: LibboxAutoRedirectHandlerProtocol?) throws -> (any LibboxAutoRedirectSessionProtocol)! {
+    public func createAutoRedirect(_: Data?, handler _: LibboxAutoRedirectHandlerProtocol?) -> (any LibboxAutoRedirectSessionProtocol)! {
         nil
     }
 
@@ -455,7 +455,7 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         false
     }
 
-    public func createBridge(_: LibboxBridgeOptions?) throws -> (any LibboxBridgeSessionProtocol)! {
+    public func createBridge(_: LibboxBridgeOptions?) -> (any LibboxBridgeSessionProtocol)! {
         nil
     }
 
