@@ -1,0 +1,1119 @@
+# 《SFI 接入 sing-box MITM 的源码修改清单》
+
+> 目标：将前面设计的 **sing-box MITM Service** 接入 **SFI（sing-box for iOS）客户端体系**，形成：
+>
+> ```
+> SFI UI
+>    |
+>    |
+> Network Extension
+>    |
+>    |
+> Libbox.framework
+>    |
+>    |
+> sing-box Core
+>    |
+>    +-- TUN
+>    +-- Router
+>    +-- Outbound
+>    +-- MITM Service
+> ```
+>
+> SFI 当前属于 sing-box Apple 客户端体系，负责配置管理、TUN/VPN Extension 和 libbox 集成；旧版 SFI 仓库已经归档，后续维护集中在 `sing-box-for-apple`。([GitHub][1])
+
+---
+
+# 一、源码仓库结构 
+
+推荐工作区：
+
+```
+workspace/
+
+├── sing-box/
+│
+│   ├── option/
+│   ├── protocol/
+│   │    └── mitm/
+│   ├── service/
+│   ├── experimental/libbox/
+│   └── cmd/
+│
+│
+└── sing-box-for-apple/
+    │
+    ├── SFI/
+    │
+    ├── Extension/
+    │
+    ├── Library/
+    │
+    ├── Jailbreak/
+    │
+    └── Frameworks/
+         └── Libbox.xcframework
+```
+
+`sng-box-for-apple` 当前包含 SFI、Extension、Jailbreak 等 Apple 平台组件。([GitHub][2])
+
+---
+
+# 二、整体修改范围
+
+分成两个工程：
+
+## A. sing-box Core
+
+负责：
+
+```
+MITM engine
+TLS
+HTTP
+Router integration
+Config
+Service
+```
+
+修改：
+
+```
+sing-box/
+
+option/
+ └── mitm.go
+
+
+constant/
+ └── constant.go
+
+
+protocol/
+ └── mitm/
+
+
+service/
+ └── registry
+
+
+experimental/libbox/
+ └── API export
+```
+
+---
+
+## B. SFI App
+
+负责：
+
+```
+UI
+配置生成
+CA 管理
+状态显示
+Framework 更新
+```
+
+修改：
+
+```
+sing-box-for-apple/
+
+SFI/
+
+ ├── Views/
+ ├── Settings/
+ ├── Profile/
+ └── Resources/
+
+
+Library/
+
+ └── Libbox bridge
+
+
+Jailbreak/
+
+ └── CA installer
+```
+
+---
+
+# 三、Core 层修改
+
+---
+
+# 1. 新增 MITM Service Option
+
+文件：
+
+```
+sing-box/option/mitm.go
+```
+
+新增：
+
+```go
+package option
+
+
+type MITMServiceOptions struct {
+
+    Enabled bool `json:"enabled"`
+
+    CA MITMCAOptions `json:"ca"`
+
+    Match MITMMatchOptions `json:"match"`
+
+    Rewrite MITMRewriteOptions `json:"rewrite"`
+
+}
+
+
+type MITMCAOptions struct {
+
+    Certificate string `json:"certificate"`
+
+    PrivateKey string `json:"private_key"`
+
+}
+```
+
+---
+
+# 2. 注册 Service Type
+
+文件：
+
+```
+constant/constant.go
+```
+
+增加：
+
+```go
+const (
+    TypeMITM = "mitm"
+)
+```
+
+---
+
+# 3. Service Registry
+
+文件：
+
+```
+include/service.go
+```
+
+增加：
+
+```go
+mitm.RegisterService(
+    registry,
+)
+```
+
+流程：
+
+```
+JSON
+
+ ↓
+
+services[]
+
+ ↓
+
+type=mitm
+
+ ↓
+
+MITMServiceOptions
+
+ ↓
+
+NewService()
+```
+
+---
+
+# 4. 新增 MITM Core
+
+目录：
+
+```
+protocol/mitm/
+```
+
+结构：
+
+```
+protocol/mitm/
+
+service.go
+
+interceptor.go
+
+clienthello.go
+
+tls.go
+
+certificate.go
+
+ca.go
+
+cache.go
+
+http1.go
+
+http2.go
+
+websocket.go
+
+rewrite/
+```
+
+---
+
+# 5. Service 生命周期
+
+文件：
+
+```
+protocol/mitm/service.go
+```
+
+核心：
+
+```go
+type Service struct {
+
+    ctx context.Context
+
+    router adapter.Router
+
+    ca *CA
+
+    matcher *Matcher
+
+}
+```
+
+启动：
+
+```go
+func NewService(
+ ctx context.Context,
+ logger log.ContextLogger,
+ tag string,
+ options option.MITMServiceOptions,
+)(adapter.Service,error)
+```
+
+---
+
+# 6. Router 接入
+
+不要：
+
+```go
+route.NewRouter()
+```
+
+禁止重复创建。
+
+应该：
+
+```go
+router :=
+service.FromContext[
+adapter.Router
+](ctx)
+```
+
+数据流：
+
+```
+MITM
+
+ ↓
+
+HTTP Request
+
+ ↓
+
+sing-box Router
+
+ ↓
+
+Outbound
+```
+
+---
+
+# 四、libbox 修改
+
+SFI 不直接调用 sing-box。
+
+中间层：
+
+```
+sing-box core
+
+        |
+
+        |
+
+libbox
+
+        |
+
+        |
+
+Swift
+```
+
+---
+
+# 1. 导出 MITM 状态 API
+
+目录：
+
+```
+experimental/libbox
+```
+
+新增：
+
+```
+mitm.go
+```
+
+例如：
+
+```go
+package libbox
+
+
+func GetMITMStatus()
+MITMStatus
+{
+
+}
+```
+
+返回：
+
+```go
+type MITMStatus struct {
+
+ Enabled bool
+
+ CertificateInstalled bool
+
+ Connections int
+
+}
+```
+
+---
+
+# 2. 导出 CA 操作
+
+增加：
+
+```go
+func GenerateMITMCA(
+ path string,
+)
+error
+```
+
+用途：
+
+SFI UI：
+
+```
+Settings
+
+ ↓
+
+MITM
+
+ ↓
+
+Generate CA
+```
+
+---
+
+# 五、Libbox 编译
+
+SFI 使用：
+
+```
+Libbox.xcframework
+```
+
+构建流程：
+
+```
+sing-box
+
+ ↓
+
+gomobile bind
+
+ ↓
+
+Libbox.framework
+
+ ↓
+
+xcframework
+
+ ↓
+
+SFI
+```
+
+当前 Apple 工程使用 libbox framework 作为核心集成方式。([Sing Box][3])
+
+---
+
+# 六、SFI 工程修改
+
+---
+
+# 1. 增加 MITM 设置页面
+
+位置：
+
+```
+SFI/
+Views/
+Settings/
+```
+
+新增：
+
+```
+MITMSettingsView.swift
+```
+
+UI：
+
+```
+设置
+
+ ├── VPN
+ |
+ ├── Routing
+ |
+ └── MITM
+
+      Enable
+
+      CA Status
+
+      Export CA
+
+      Logs
+```
+
+---
+
+# 2. 增加配置模型
+
+Swift：
+
+```
+SFI/Models/
+```
+
+新增：
+
+```swift
+struct MITMSettings {
+
+    var enabled: Bool
+
+    var caPath:String
+
+}
+```
+
+---
+
+# 3. Profile JSON 生成
+
+原：
+
+```json
+{
+"inbounds":[]
+}
+```
+
+增加：
+
+```json
+{
+"services":[
+ {
+  "type":"mitm",
+
+  "tag":"mitm",
+
+  "options":{
+    "enabled":true
+  }
+ }
+]
+}
+```
+
+---
+
+# 七、Network Extension 修改
+
+位置：
+
+```
+Extension/
+```
+
+原则：
+
+不修改 TLS。
+
+不要：
+
+```
+Swift
+
+ ↓
+
+TLS parser
+```
+
+保持：
+
+```
+Packet Tunnel Provider
+
+ ↓
+
+libbox.Start()
+
+ ↓
+
+sing-box TUN
+
+ ↓
+
+MITM
+```
+
+---
+
+# 八、Jailbreak 模块
+
+当前 Apple 工程包含 Jailbreak 相关组件。([GitHub][2])
+
+目录：
+
+```
+Jailbreak/
+```
+
+新增：
+
+```
+MITMCAInstaller.swift
+```
+
+职责：
+
+```
+生成 CA
+
+↓
+
+保存
+
+↓
+
+调用安装流程
+```
+
+---
+
+# 九、CA 文件管理
+
+路径：
+
+推荐：
+
+```
+Library/Application Support/
+
+SFI/
+
+ └── MITM/
+
+      ca.pem
+
+      ca.key
+```
+
+不要：
+
+```
+Bundle/
+```
+
+原因：
+
+* App 更新覆盖
+* 不可写
+
+---
+
+# 十、越狱版增强
+
+越狱 SFI：
+
+增加：
+
+```
+JailbreakDaemon
+```
+
+流程：
+
+```
+launchd
+
+ |
+
+sing-box daemon
+
+ |
+
+MITM Service
+
+```
+
+配置：
+
+```
+/var/mobile/singbox/
+```
+
+---
+
+# 十一、SFI 配置同步
+
+增加：
+
+```
+MITMConfigProvider.swift
+```
+
+职责：
+
+Swift：
+
+```
+MITM UI
+
+ ↓
+
+JSON
+
+ ↓
+
+Profile
+
+ ↓
+
+libbox.Start()
+```
+
+---
+
+# 十二、Bridge API
+
+Swift 调用：
+
+新增：
+
+```swift
+Libbox.getMITMStatus()
+```
+
+显示：
+
+```
+MITM
+
+Enabled
+
+✓ CA Installed
+
+Connections: 12
+```
+
+---
+
+# 十三、日志接口
+
+增加：
+
+```go
+GetMITMLogs()
+```
+
+Swift：
+
+```
+MITM Debug Console
+```
+
+显示：
+
+```
+TLS ClientHello
+
+SNI:
+api.example.com
+
+
+Certificate generated
+
+
+Outbound:
+proxy
+```
+
+---
+
+# 十四、Xcode 修改列表
+
+## Target:
+
+```
+SFI
+```
+
+增加：
+
+Framework:
+
+```
+Libbox.xcframework
+```
+
+Capabilities:
+
+```
+Network Extension
+
+App Groups
+
+VPN
+```
+
+---
+
+# 十五、Build 流程
+
+完整：
+
+```
+修改 sing-box
+
+↓
+
+go test
+
+↓
+
+build libbox
+
+↓
+
+生成 xcframework
+
+↓
+
+复制 Framework
+
+↓
+
+Xcode build
+
+↓
+
+真机安装
+```
+
+---
+
+# 十六、Makefile 增加
+
+建议：
+
+```
+make mitm-ios
+```
+
+执行：
+
+```
+build sing-box
+
++
+
+build libbox
+
++
+
+copy framework
+```
+
+例如：
+
+```make
+mitm-ios:
+
+	go build ./...
+
+	go run ./cmd/internal/build_libbox \
+	-target apple \
+	-platform ios
+
+	cp -R \
+	Libbox.xcframework \
+	../sing-box-for-apple/Frameworks/
+```
+
+---
+
+# 十七、测试矩阵
+
+## Core
+
+```
+go test ./...
+```
+
+测试：
+
+* JSON
+* Service
+* CA
+* Certificate
+* TLS
+
+---
+
+## SFI
+
+测试：
+
+```
+启动 VPN
+
+↓
+
+访问 HTTPS
+
+↓
+
+MITM 捕获
+
+↓
+
+Router 分流
+
+↓
+
+Outbound
+```
+
+---
+
+# 十八、最终目录状态
+
+完成后：
+
+```
+sing-box/
+
+protocol/
+
+ └── mitm/
+
+
+experimental/libbox/
+
+ └── mitm_api.go
+
+
+
+sing-box-for-apple/
+
+
+SFI/
+
+ ├── MITMSettingsView.swift
+ ├── MITMConfig.swift
+ └── MITMStatus.swift
+
+
+Jailbreak/
+
+ └── MITMCAInstaller.swift
+
+
+Frameworks/
+
+ └── Libbox.xcframework
+```
+
+---
+
+# 十九、推荐开发顺序
+
+不要同时修改两个仓库。
+
+顺序：
+
+```
+Step 1
+
+sing-box MITM Service
+
+↓
+
+Step 2
+
+libbox export API
+
+↓
+
+Step 3
+
+build Libbox.xcframework
+
+↓
+
+Step 4
+
+SFI 替换 Framework
+
+↓
+
+Step 5
+
+SFI UI
+
+↓
+
+Step 6
+
+Jailbreak CA
+
+↓
+
+Step 7
+
+真机测试
+```
+
+---
+
+# 二十、最终目标
+
+完成后 SFI：
+
+```
+SFI App
+
+ |
+
+VPN Extension
+
+ |
+
+libbox
+
+ |
+
+sing-box
+
+ |
+
++----------------+
+
+| TUN            |
+
+| MITM Service   |
+
+| Router         |
+
+| Outbound       |
+
++----------------+
+
+ |
+
+Internet
+```
+
+实现：
+
+* SFI 原生配置 MITM
+* sing-box Router 保持一致
+* TUN 透明代理
+* HTTPS interception
+* 动态证书
+* HTTP/2
+* WebSocket
+* iOS 越狱部署
+
+---
+
+下一步建议生成：
+
+**《sing-box MITM + SFI 第一阶段源码 Patch 计划（commit-by-commit）》**
+
+会具体到：
+
+```
+commit 001:
+option/mitm.go
+
+commit 002:
+service registry
+
+commit 003:
+libbox API
+
+commit 004:
+SFI Swift UI
+
+commit 005:
+Jailbreak CA
+```
+
+然后可以直接进入代码实现阶段。
+
+[1]: https://github.com/SagerNet/sing-box-for-ios/blob/main/README.md?utm_source=chatgpt.com "sing-box-for-ios/README.md at main · SagerNet/sing-box-for-ios · GitHub"
+[2]: https://github.com/SagerNet/sing-box-for-apple?utm_source=chatgpt.com "GitHub - SagerNet/sing-box-for-apple: iOS/macOS/tvOS client for sing-box · GitHub"
+[3]: https://sing-box.sagernet.org/clients/apple/?utm_source=chatgpt.com "sing-box for Apple platforms - sing-box"
