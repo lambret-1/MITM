@@ -154,7 +154,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         stopService()
         if let server = commandServer {
             try? await Task.sleep(nanoseconds: 100 * NSEC_PER_MSEC)
-            try? server.close()
+            server.close()
             commandServer = nil
         }
         #if os(macOS)
@@ -183,9 +183,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
 }
 
 extension ExtensionProvider: LibboxCommandServerHandlerProtocol {
-    public func connectSSHAgent() throws -> Int32 {
-        0
-    }
+    public func connectSSHAgent() throws {}
 
     public func getSystemProxyStatus() throws -> LibboxSystemProxyStatus {
         platformInterface!.getSystemProxyStatus()
