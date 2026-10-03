@@ -83,9 +83,9 @@ open class ExtensionProvider: NEPacketTunnelProvider {
             writeFatalError("(packet-tunnel) error: read config file \(profile.path): \(error.localizedDescription)")
             return
         }
-        var error: NSError?
-        commandServer.startOrReloadService(configContent, options: nil, error: &error)
-        if let error {
+        do {
+            try commandServer.startOrReloadService(configContent, options: nil)
+        } catch {
             writeFatalError("(packet-tunnel) error: start service: \(error.localizedDescription)")
             return
         }
@@ -187,8 +187,8 @@ extension ExtensionProvider: LibboxCommandServerHandlerProtocol {
         0
     }
 
-    public func getSystemProxyStatus() throws -> LibboxSystemProxyStatus? {
-        platformInterface?.getSystemProxyStatus()
+    public func getSystemProxyStatus() throws -> LibboxSystemProxyStatus {
+        platformInterface!.getSystemProxyStatus()
     }
 
     public func serviceReload() throws {

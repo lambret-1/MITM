@@ -185,7 +185,7 @@ public class CommandClient: ObservableObject {
 
         func setDefaultLogLevel(_: Int32) {}
 
-        func writeConnectionEvents(_: LibboxConnectionEvents?) {}
+        func write(_ events: LibboxConnectionEvents?) {}
 
         func writeOutbounds(_: (any LibboxOutboundGroupItemIteratorProtocol)?) {}
 

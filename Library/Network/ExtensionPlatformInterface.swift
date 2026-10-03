@@ -36,7 +36,7 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
             settings.mtu = NSNumber(value: options.getMTU())
 
             let dnsServer = try options.getDNSServerAddress()
-            let dnsSettings = NEDNSSettings(servers: [dnsServer.value])
+            let dnsSettings = NEDNSSettings(servers: [dnsServer])
             dnsSettings.matchDomains = [""]
             dnsSettings.matchDomainsNoSearch = true
             settings.dnsSettings = dnsSettings
@@ -198,13 +198,13 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         }
     }
 
-    public func usePlatformAutoDetectInterfaceControl() -> Bool {
+    public func usePlatformAutoDetectControl() -> Bool {
         false
     }
 
-    public func autoDetectInterfaceControl(_: Int32) throws {}
+    public func autoDetectControl(_: Int32) throws {}
 
-    public func findConnectionOwner(ipProtocol _: Int32, sourceAddress _: String?, sourcePort _: Int32, destinationAddress _: String?, destinationPort _: Int32) throws -> LibboxConnectionOwner? {
+    public func findConnectionOwner(_: Int32, sourceAddress _: String?, sourcePort _: Int32, destinationAddress _: String?, destinationPort _: Int32) throws -> LibboxConnectionOwner? {
         nil
     }
 
@@ -427,11 +427,11 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         false
     }
 
-    public func openShellSession(user _: LibboxPlatformUser?, command _: String?, environ _: (any LibboxStringIteratorProtocol)?, term _: String?, rows _: Int32, cols _: Int32) throws -> (any LibboxShellSessionProtocol)? {
+    public func openShellSession(_: LibboxPlatformUser?, command _: String?, environ _: (any LibboxStringIteratorProtocol)?, term _: String?, rows _: Int32, cols _: Int32) throws -> (any LibboxShellSessionProtocol)? {
         nil
     }
 
-    public func lookupUser(username _: String?) throws -> LibboxPlatformUser? {
+    public func lookupUser(_: String?) throws -> LibboxPlatformUser? {
         nil
     }
 
@@ -447,7 +447,7 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         false
     }
 
-    public func createAutoRedirect(options _: Data?, handler _: LibboxAutoRedirectHandlerProtocol?) throws -> (any LibboxAutoRedirectSessionProtocol)? {
+    public func createAutoRedirect(_: Data?, handler _: LibboxAutoRedirectHandlerProtocol?) throws -> (any LibboxAutoRedirectSessionProtocol)? {
         nil
     }
 
@@ -455,11 +455,11 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         false
     }
 
-    public func createBridge(options _: LibboxBridgeOptions?) throws -> (any LibboxBridgeSessionProtocol)? {
+    public func createBridge(_: LibboxBridgeOptions?) throws -> (any LibboxBridgeSessionProtocol)? {
         nil
     }
 
-    public func cancelNotification(identifier _: String?, typeID _: Int32) throws {}
+    public func cancelNotification(_: String?, typeID _: Int32) throws {}
 
     public func startNeighborMonitor(_: LibboxNeighborUpdateListenerProtocol?) throws {}
 
@@ -468,6 +468,6 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
     public func registerMyInterface(_: String?) {}
 
     public func tailscaleHostname() -> String {
-        Host.current().localizedName ?? "iOS"
+        ProcessInfo.processInfo.hostName
     }
 }
