@@ -1090,11 +1090,7 @@ Internet
 ---
 
 
-然后可以直接进入代码实现阶段。
 
-[1]: https://github.com/SagerNet/sing-box-for-ios/blob/main/README.md?utm_source=chatgpt.com "sing-box-for-ios/README.md at main · SagerNet/sing-box-for-ios · GitHub"
-[2]: https://github.com/SagerNet/sing-box-for-apple?utm_source=chatgpt.com "GitHub - SagerNet/sing-box-for-apple: iOS/macOS/tvOS client for sing-box · GitHub"
-[3]: https://sing-box.sagernet.org/clients/apple/?utm_source=chatgpt.com "sing-box for Apple platforms - sing-box"
 
 # 《sing-box MITM + SFI 完整阶段源码 Patch 计划》
 
@@ -2338,7 +2334,3 @@ Outbound
 **SFI + sing-box Core + MITM + iOS 越狱部署平台。**
 
 ---
-
-
-[1]: https://sing-box.sagernet.org/clients/apple/?utm_source=chatgpt.com "sing-box for Apple platforms - sing-box"
-[2]: https://github.com/proother/sing-box-lib/blob/main/README.md?utm_source=chatgpt.com "sing-box-lib/README.md at main · proother/sing-box-lib · GitHub"
