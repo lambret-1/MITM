@@ -30,11 +30,32 @@ jobs:
 
       - name: 解包官方 SFI
         run: |
-          echo "=== 解包官方 SFI ==="
-          mkdir -p sfi-root
-          dpkg-deb -x SFI-official.deb sfi-root/
-          dpkg-deb -e SFI-official.deb sfi-root/DEBIAN
+          echo "=== 解包官方 SFI（ar + tar，macOS 无 dpkg-deb）==="
+          mkdir -p sfi-root/DEBIAN
+          TMP_DIR=$(mktemp -d)
+          cd "$TMP_DIR"
+          ar x "$GITHUB_WORKSPACE/SFI-official.deb"
+          ls -la
+          # 解压 data（可能是 gz 或 xz）
+          if [ -f data.tar.gz ]; then
+            tar -xzf data.tar.gz -C "$GITHUB_WORKSPACE/sfi-root/"
+          elif [ -f data.tar.xz ]; then
+            tar -xJf data.tar.xz -C "$GITHUB_WORKSPACE/sfi-root/"
+          elif [ -f data.tar.zst ]; then
+            tar --zstd -xf data.tar.zst -C "$GITHUB_WORKSPACE/sfi-root/"
+          fi
+          # 解压 control
+          if [ -f control.tar.gz ]; then
+            tar -xzf control.tar.gz -C "$GITHUB_WORKSPACE/sfi-root/DEBIAN/"
+          elif [ -f control.tar.xz ]; then
+            tar -xJf control.tar.xz -C "$GITHUB_WORKSPACE/sfi-root/DEBIAN/"
+          elif [ -f control.tar.zst ]; then
+            tar --zstd -xf control.tar.zst -C "$GITHUB_WORKSPACE/sfi-root/DEBIAN/"
+          fi
+          cd "$GITHUB_WORKSPACE"
+          rm -rf "$TMP_DIR"
           echo "解包完成"
+          ls sfi-root/DEBIAN/
           find sfi-root -name "Library" -path "*/Library.framework/*" -type f
 
       - name: 设置 Go 环境
@@ -105,8 +126,17 @@ jobs:
           sed -i '' 's/^Version: .*/Version: ${{ env.SFI_VERSION }}-sb1mitm1/' sfi-root/DEBIAN/control
           sed -i '' 's/^Description: .*/Description: SFI 定制版 - 集成 SB1 MITM 模块/' sfi-root/DEBIAN/control
 
-          # 重新打包（gzip 兼容 iOS 旧版 dpkg）
-          dpkg-deb -Zgzip -b sfi-root output/SFI-sb1mitm-iphoneos-arm64.deb
+          # 手动打包 deb（macOS 无 dpkg-deb，用 ar + tar.gz）
+          echo "=== 手动构建 deb ==="
+          TMP_DIR=$(mktemp -d)
+          echo "2.0" > "$TMP_DIR/debian-binary"
+          tar -czf "$TMP_DIR/control.tar.gz" -C sfi-root/DEBIAN .
+          tar -czf "$TMP_DIR/data.tar.gz" -C sfi-root ./var
+          ar r output/SFI-sb1mitm-iphoneos-arm64.deb \
+            "$TMP_DIR/debian-binary" \
+            "$TMP_DIR/control.tar.gz" \
+            "$TMP_DIR/data.tar.gz"
+          rm -rf "$TMP_DIR"
 
           ls -lh output/
 
