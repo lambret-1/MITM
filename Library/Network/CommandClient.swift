@@ -100,15 +100,15 @@ public class CommandClient: ObservableObject {
         let clientOptions = LibboxCommandClientOptions()
         switch connectionType {
         case .status:
-            clientOptions.command = LibboxCommandStatus
+            clientOptions.addCommand(LibboxCommandStatus)
         case .groups:
-            clientOptions.command = LibboxCommandGroup
+            clientOptions.addCommand(LibboxCommandGroup)
         case .log:
-            clientOptions.command = LibboxCommandLog
+            clientOptions.addCommand(LibboxCommandLog)
         case .clashMode:
-            clientOptions.command = LibboxCommandClashMode
+            clientOptions.addCommand(LibboxCommandClashMode)
         case .connections:
-            clientOptions.command = LibboxCommandConnections
+            clientOptions.addCommand(LibboxCommandConnections)
         }
         switch connectionType {
         case .log:
@@ -166,14 +166,15 @@ public class CommandClient: ObservableObject {
             }
         }
 
-        func writeLogs(_ messageList: (any LibboxStringIteratorProtocol)?) {
+        func writeLogs(_ messageList: LibboxLogIteratorProtocol?) {
             guard let messageList else {
                 return
             }
             DispatchQueue.main.async { [self] in
                 var newLogList = commandClient.logList
                 while messageList.hasNext() {
-                    newLogList.append(messageList.next())
+                    let entry = messageList.next()!
+                    newLogList.append(entry.message)
                 }
                 if newLogList.count >= commandClient.logMaxLines {
                     newLogList.removeSubrange(0 ... newLogList.count - commandClient.logMaxLines)
@@ -181,6 +182,12 @@ public class CommandClient: ObservableObject {
                 commandClient.logList = newLogList
             }
         }
+
+        func setDefaultLogLevel(_: Int32) {}
+
+        func writeConnectionEvents(_: LibboxConnectionEvents?) {}
+
+        func writeOutbounds(_: (any LibboxOutboundGroupItemIteratorProtocol)?) {}
 
         func writeStatus(_ message: LibboxStatusMessage?) {
             DispatchQueue.main.async { [self] in
@@ -211,17 +218,6 @@ public class CommandClient: ObservableObject {
         func updateClashMode(_ newMode: String?) {
             DispatchQueue.main.async { [self] in
                 commandClient.clashMode = newMode!
-            }
-        }
-
-        func write(_ message: LibboxConnections?) {
-            guard let message else {
-                return
-            }
-            let connections = commandClient.filterConnections(message)
-            DispatchQueue.main.async { [self] in
-                commandClient.rawConnections = message
-                commandClient.connections = connections
             }
         }
     }

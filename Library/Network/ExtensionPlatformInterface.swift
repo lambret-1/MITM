@@ -6,7 +6,7 @@ import UserNotifications
     import CoreWLAN
 #endif
 
-public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol, LibboxCommandServerHandlerProtocol {
+public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtocol {
     private let tunnel: ExtensionProvider
     private var networkSettings: NEPacketTunnelNetworkSettings?
 
@@ -198,22 +198,14 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         }
     }
 
-    public func usePlatformAutoDetectControl() -> Bool {
+    public func usePlatformAutoDetectInterfaceControl() -> Bool {
         false
     }
 
-    public func autoDetectControl(_: Int32) throws {}
+    public func autoDetectInterfaceControl(_: Int32) throws {}
 
-    public func findConnectionOwner(_: Int32, sourceAddress _: String?, sourcePort _: Int32, destinationAddress _: String?, destinationPort _: Int32, ret0_ _: UnsafeMutablePointer<Int32>?) throws {
-        throw NSError(domain: "not implemented", code: 0)
-    }
-
-    public func packageName(byUid _: Int32, error _: NSErrorPointer) -> String {
-        ""
-    }
-
-    public func uid(byPackageName _: String?, ret0_ _: UnsafeMutablePointer<Int32>?) throws {
-        throw NSError(domain: "not implemented", code: 0)
+    public func findConnectionOwner(ipProtocol _: Int32, sourceAddress _: String?, sourcePort _: Int32, destinationAddress _: String?, destinationPort _: Int32) throws -> LibboxConnectionOwner? {
+        nil
     }
 
     public func useProcFS() -> Bool {
@@ -356,18 +348,7 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         #endif
     }
 
-    public func serviceReload() throws {
-        runBlocking { [self] in
-            await tunnel.reloadService()
-        }
-    }
-
-    public func postServiceClose() {
-        reset()
-        tunnel.postServiceClose()
-    }
-
-    public func getSystemProxyStatus() -> LibboxSystemProxyStatus? {
+    public func getSystemProxyStatus() -> LibboxSystemProxyStatus {
         let status = LibboxSystemProxyStatus()
         guard let networkSettings else {
             return status
@@ -436,7 +417,57 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         nil
     }
 
-    public func systemCertificates() -> (any LibboxStringIteratorProtocol)? {
+    // MARK: - 新协议方法默认实现
+
+    public func checkPlatformShell() throws -> Bool {
+        false
+    }
+
+    public func usePlatformShell() -> Bool {
+        false
+    }
+
+    public func openShellSession(user _: LibboxPlatformUser?, command _: String?, environ _: (any LibboxStringIteratorProtocol)?, term _: String?, rows _: Int32, cols _: Int32) throws -> (any LibboxShellSessionProtocol)? {
         nil
+    }
+
+    public func lookupUser(username _: String?) throws -> LibboxPlatformUser? {
+        nil
+    }
+
+    public func lookupSFTPServer() throws -> String {
+        ""
+    }
+
+    public func readSystemSSHHostKey() throws -> String {
+        ""
+    }
+
+    public func usePlatformAutoRedirect() -> Bool {
+        false
+    }
+
+    public func createAutoRedirect(options _: Data?, handler _: LibboxAutoRedirectHandlerProtocol?) throws -> (any LibboxAutoRedirectSessionProtocol)? {
+        nil
+    }
+
+    public func usePlatformBridge() -> Bool {
+        false
+    }
+
+    public func createBridge(options _: LibboxBridgeOptions?) throws -> (any LibboxBridgeSessionProtocol)? {
+        nil
+    }
+
+    public func cancelNotification(identifier _: String?, typeID _: Int32) throws {}
+
+    public func startNeighborMonitor(_: LibboxNeighborUpdateListenerProtocol?) throws {}
+
+    public func closeNeighborMonitor(_: LibboxNeighborUpdateListenerProtocol?) throws {}
+
+    public func registerMyInterface(_: String?) {}
+
+    public func tailscaleHostname() -> String {
+        Host.current().localizedName ?? "iOS"
     }
 }

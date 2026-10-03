@@ -9,45 +9,31 @@ import NetworkExtension
 #endif
 
 open class ExtensionProvider: NEPacketTunnelProvider {
-    public var username: String?
     private var commandServer: LibboxCommandServer!
-    private var boxService: LibboxBoxService!
     private var systemProxyAvailable = false
     private var systemProxyEnabled = false
     private var platformInterface: ExtensionPlatformInterface!
 
     override open func startTunnel(options _: [String: NSObject]?) async throws {
-        LibboxClearServiceError()
-
         let options = LibboxSetupOptions()
         options.basePath = FilePath.sharedDirectory.relativePath
         options.workingPath = FilePath.workingDirectory.relativePath
         options.tempPath = FilePath.cacheDirectory.relativePath
         var error: NSError?
-        #if os(tvOS)
-            options.isTVOS = true
-        #endif
-        if let username {
-            options.username = username
-        }
         LibboxSetup(options, &error)
         if let error {
             writeFatalError("(packet-tunnel) error: setup service: \(error.localizedDescription)")
             return
         }
 
-        LibboxRedirectStderr(FilePath.cacheDirectory.appendingPathComponent("stderr.log").relativePath, &error)
-        if let error {
-            writeFatalError("(packet-tunnel) redirect stderr error: \(error.localizedDescription)")
-            return
-        }
-
-        await LibboxSetMemoryLimit(!SharedPreferences.ignoreMemoryLimit.get())
-
         if platformInterface == nil {
             platformInterface = ExtensionPlatformInterface(self)
         }
-        commandServer = await LibboxNewCommandServer(platformInterface, Int32(SharedPreferences.maxLogLines.get()))
+        commandServer = LibboxNewCommandServer(self, platformInterface, &error)
+        if let error {
+            writeFatalError("(packet-tunnel) error: create command server: \(error.localizedDescription)")
+            return
+        }
         do {
             try commandServer.start()
         } catch {
@@ -65,7 +51,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
 
     func writeMessage(_ message: String) {
         if let commandServer {
-            commandServer.writeMessage(message)
+            commandServer.writeMessage(0, message: message)
         }
     }
 
@@ -74,8 +60,7 @@ open class ExtensionProvider: NEPacketTunnelProvider {
             NSLog(message)
         #endif
         writeMessage(message)
-        var error: NSError?
-        LibboxWriteServiceError(message, &error)
+        commandServer?.setError(message)
         cancelTunnelWithError(nil)
     }
 
@@ -99,32 +84,21 @@ open class ExtensionProvider: NEPacketTunnelProvider {
             return
         }
         var error: NSError?
-        let service = LibboxNewService(configContent, platformInterface, &error)
+        commandServer.startOrReloadService(configContent, options: nil, error: &error)
         if let error {
-            writeFatalError("(packet-tunnel) error: create service: \(error.localizedDescription)")
-            return
-        }
-        guard let service else {
-            return
-        }
-        do {
-            try service.start()
-        } catch {
             writeFatalError("(packet-tunnel) error: start service: \(error.localizedDescription)")
             return
         }
-        commandServer.setService(service)
-        boxService = service
         #if os(macOS)
             await SharedPreferences.startedByUser.set(true)
-            if service.needWIFIState() {
+            if commandServer.needWIFIState() {
                 if !Variant.useSystemExtension {
                     locationManager = CLLocationManager()
-                    locationDelegate = stubLocationDelegate(boxService)
+                    locationDelegate = stubLocationDelegate(commandServer)
                     locationManager?.delegate = locationDelegate
                     locationManager?.requestLocation()
                 } else {
-                    commandServer.writeMessage("(packet-tunnel) WIFI SSID and BSSID information is not currently available in the standalone version of SFM. We are working on resolving this issue.")
+                    commandServer.writeMessage(0, message: "(packet-tunnel) WIFI SSID and BSSID information is not currently available in the standalone version of SFM. We are working on resolving this issue.")
                 }
             }
         #endif
@@ -136,13 +110,13 @@ open class ExtensionProvider: NEPacketTunnelProvider {
         private var locationDelegate: stubLocationDelegate?
 
         class stubLocationDelegate: NSObject, CLLocationManagerDelegate {
-            private unowned let boxService: LibboxBoxService
-            init(_ boxService: LibboxBoxService) {
-                self.boxService = boxService
+            private unowned let commandServer: LibboxCommandServer
+            init(_ commandServer: LibboxCommandServer) {
+                self.commandServer = commandServer
             }
 
             func locationManagerDidChangeAuthorization(_: CLLocationManager) {
-                boxService.updateWIFIState()
+                commandServer.updateWIFIState()
             }
 
             func locationManager(_: CLLocationManager, didUpdateLocations _: [CLLocation]) {}
@@ -153,14 +127,10 @@ open class ExtensionProvider: NEPacketTunnelProvider {
     #endif
 
     private func stopService() {
-        if let service = boxService {
-            do {
-                try service.close()
-            } catch {
-                writeMessage("(packet-tunnel) error: stop service: \(error.localizedDescription)")
-            }
-            boxService = nil
-            commandServer.setService(nil)
+        do {
+            try commandServer.closeService()
+        } catch {
+            writeMessage("(packet-tunnel) error: stop service: \(error.localizedDescription)")
         }
         if let platformInterface {
             platformInterface.reset()
@@ -174,16 +144,13 @@ open class ExtensionProvider: NEPacketTunnelProvider {
             reasserting = false
         }
         stopService()
-        commandServer.resetLog()
         await startService()
     }
 
-    func postServiceClose() {
-        boxService = nil
-    }
+    func postServiceClose() {}
 
     override open func stopTunnel(with reason: NEProviderStopReason) async {
-        writeMessage("(packet-tunnel) stopping, reason: \(reason)")
+        writeMessage("(packet-tunnel) stopping, reason: \(reason.rawValue)")
         stopService()
         if let server = commandServer {
             try? await Task.sleep(nanoseconds: 100 * NSEC_PER_MSEC)
@@ -207,14 +174,42 @@ open class ExtensionProvider: NEPacketTunnelProvider {
     }
 
     override open func sleep() async {
-        if let boxService {
-            boxService.pause()
-        }
+        commandServer?.pause()
     }
 
     override open func wake() {
-        if let boxService {
-            boxService.wake()
+        commandServer?.wake()
+    }
+}
+
+extension ExtensionProvider: LibboxCommandServerHandlerProtocol {
+    public func connectSSHAgent() throws -> Int32 {
+        0
+    }
+
+    public func getSystemProxyStatus() throws -> LibboxSystemProxyStatus? {
+        platformInterface?.getSystemProxyStatus()
+    }
+
+    public func serviceReload() throws {
+        Task {
+            await self.reloadService()
         }
+    }
+
+    public func serviceStop() throws {
+        Task {
+            self.cancelTunnelWithError(nil)
+        }
+    }
+
+    public func setSystemProxyEnabled(_: Bool) throws {}
+
+    public func triggerNativeCrash() throws {
+        fatalError("native crash")
+    }
+
+    public func writeDebugMessage(_ message: String?) {
+        writeMessage(message ?? "")
     }
 }
