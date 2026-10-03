@@ -389,7 +389,7 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         networkSettings = nil
     }
 
-    public func sendNotification(_ notification: LibboxNotification?) throws {
+    public func send(_ notification: LibboxNotification?) throws {
         #if !os(tvOS)
             guard let notification else {
                 return

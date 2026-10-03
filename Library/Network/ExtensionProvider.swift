@@ -183,7 +183,9 @@ open class ExtensionProvider: NEPacketTunnelProvider {
 }
 
 extension ExtensionProvider: LibboxCommandServerHandlerProtocol {
-    public func connectSSHAgent() throws {}
+    public func connectSSHAgent() throws -> Int32 {
+        0
+    }
 
     public func getSystemProxyStatus() throws -> LibboxSystemProxyStatus {
         platformInterface!.getSystemProxyStatus()
