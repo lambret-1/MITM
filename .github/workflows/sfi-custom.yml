@@ -78,6 +78,7 @@ jobs:
           echo "=== Xcode 编译越狱版 SFI ==="
           cd sing-box-for-apple
           export PATH="$HOME/go/bin:/opt/homebrew/bin:$PATH"
+          export XCODEBUILD_FLAGS=()
 
           # 运行官方越狱打包脚本
           bash Jailbreak/package.sh
