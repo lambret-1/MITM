@@ -1,0 +1,91 @@
+name: 构建 Libbox.xcframework
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - sing-box
+    paths:
+      - 'experimental/libbox/**'
+      - 'option/**'
+      - 'protocol/**'
+      - 'common/**'
+      - 'go.mod'
+      - 'go.sum'
+
+env:
+  GO_VERSION: "1.25.5"
+
+jobs:
+  build-xcframework:
+    name: 编译并提交 Libbox.xcframework
+    runs-on: macos-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: 检出 iOS 分支
+        uses: actions/checkout@v4
+        with:
+          ref: iOS
+          path: apple-app
+
+      - name: 检出 sing-box 分支
+        uses: actions/checkout@v4
+        with:
+          ref: sing-box
+          path: sing-box
+
+      - name: 设置 Go 环境
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: sing-box/go.sum
+
+      - name: 安装 gomobile / gobind
+        run: |
+          go install github.com/sagernet/gomobile/cmd/gomobile@v0.1.13
+          go install github.com/sagernet/gomobile/cmd/gobind@v0.1.13
+          echo "$(go env GOPATH)/bin" >> $GITHUB_PATH
+
+      - name: 显示版本
+        run: |
+          go version
+          gomobile version
+          xcodebuild -version
+
+      - name: 编译 Libbox.xcframework
+        working-directory: sing-box
+        run: |
+          go run ./cmd/internal/build_libbox -target apple 2>&1
+
+      - name: 验证产物
+        run: |
+          ls -lh sing-box/Libbox.xcframework/
+          ls sing-box/Libbox.xcframework/*/
+          cat sing-box/Libbox.xcframework/Info.plist | head -30
+
+      - name: 复制 xcframework 到 iOS 分支
+        run: |
+          rm -rf apple-app/Libbox.xcframework
+          cp -R sing-box/Libbox.xcframework apple-app/Libbox.xcframework
+          ls -lh apple-app/Libbox.xcframework/
+
+      - name: 从 gitignore 移除 xcframework 忽略
+        working-directory: apple-app
+        run: |
+          sed -i '' '/\/Libbox.xcframework\//d' .gitignore
+          cat .gitignore
+
+      - name: 配置 Git
+        working-directory: apple-app
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: 提交并推送
+        working-directory: apple-app
+        run: |
+          git add -A
+          git diff --cached --stat
+          git commit -m "build: 更新 Libbox.xcframework 静态库（sing-box 分支构建）" || echo "无变更"
+          git push origin HEAD:iOS
