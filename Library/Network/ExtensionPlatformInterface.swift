@@ -199,11 +199,11 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         }
     }
 
-    public func usePlatformAutoDetectInterfaceControl() -> Bool {
+    public func usePlatformAutoDetectControl() -> Bool {
         false
     }
 
-    public func autoDetectInterfaceControl(_: Int32) throws {}
+    public func autoDetectControl(_: Int32) throws {}
 
     public func findConnectionOwner(_ ipProtocol: Int32, sourceAddress: String?, sourcePort: Int32, destinationAddress: String?, destinationPort: Int32) throws -> LibboxConnectionOwner {
         throw NSError(domain: "not implemented", code: 0)
