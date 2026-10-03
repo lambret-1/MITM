@@ -1,17 +1,15 @@
-name: SFI 定制包构建
+name: SFI 定制包构建（完整编译）
 
 on:
   push:
     branches: [testSFI]
     paths:
       - '.github/workflows/sfi-custom.yml'
-      - 'sfi/**'
   workflow_dispatch:
 
 env:
-  SFI_VERSION: "1.14.2"
-  SFI_URL: "https://dl.sing-box.org/releases/latest/SFI-1.14.2-iphoneos-arm64.deb"
-  PACKAGE_NAME: "com.sb1.mitm.sfi"
+  GO_VERSION: '1.25'
+  GOMOBILE_VERSION: 'v0.1.13'
 
 jobs:
   build:
@@ -22,47 +20,24 @@ jobs:
       - name: 检出代码
         uses: actions/checkout@v4
 
-      - name: 下载官方 SFI
-        run: |
-          echo "=== 下载官方越狱版 SFI ==="
-          curl -sL "${{ env.SFI_URL }}" -o SFI-official.deb
-          ls -lh SFI-official.deb
-
-      - name: 解包官方 SFI
-        run: |
-          echo "=== 解包官方 SFI（ar + tar，macOS 无 dpkg-deb）==="
-          mkdir -p sfi-root/DEBIAN
-          TMP_DIR=$(mktemp -d)
-          cd "$TMP_DIR"
-          ar x "$GITHUB_WORKSPACE/SFI-official.deb"
-          ls -la
-          # 解压 data（可能是 gz 或 xz）
-          if [ -f data.tar.gz ]; then
-            tar -xzf data.tar.gz -C "$GITHUB_WORKSPACE/sfi-root/"
-          elif [ -f data.tar.xz ]; then
-            tar -xJf data.tar.xz -C "$GITHUB_WORKSPACE/sfi-root/"
-          elif [ -f data.tar.zst ]; then
-            tar --zstd -xf data.tar.zst -C "$GITHUB_WORKSPACE/sfi-root/"
-          fi
-          # 解压 control
-          if [ -f control.tar.gz ]; then
-            tar -xzf control.tar.gz -C "$GITHUB_WORKSPACE/sfi-root/DEBIAN/"
-          elif [ -f control.tar.xz ]; then
-            tar -xJf control.tar.xz -C "$GITHUB_WORKSPACE/sfi-root/DEBIAN/"
-          elif [ -f control.tar.zst ]; then
-            tar --zstd -xf control.tar.zst -C "$GITHUB_WORKSPACE/sfi-root/DEBIAN/"
-          fi
-          cd "$GITHUB_WORKSPACE"
-          rm -rf "$TMP_DIR"
-          echo "解包完成"
-          ls sfi-root/DEBIAN/
-          find sfi-root -name "Library" -path "*/Library.framework/*" -type f
-
       - name: 设置 Go 环境
         uses: actions/setup-go@v5
         with:
-          go-version: '1.25'
+          go-version: ${{ env.GO_VERSION }}
           cache: true
+
+      - name: 安装依赖
+        run: |
+          echo "=== 安装 dpkg ldid xcbeautify ==="
+          brew install dpkg ldid xcbeautify 2>/dev/null || true
+          which dpkg-deb ldid xcbeautify
+
+      - name: 安装 gomobile
+        run: |
+          echo "=== 安装 gomobile ==="
+          go install github.com/sagernet/gomobile/cmd/gomobile@${{ env.GOMOBILE_VERSION }}
+          go install github.com/sagernet/gomobile/cmd/gobind@${{ env.GOMOBILE_VERSION }}
+          gomobile version || true
 
       - name: 检出定制 sing-box 内核
         run: |
@@ -70,86 +45,56 @@ jobs:
           git clone --depth 1 --branch sing-box https://github.com/lambret-1/MITM.git sing-box-custom
           cd sing-box-custom
           go version
+          ls experimental/libbox/
 
-      - name: 编译 iOS 内核动态库
+      - name: 编译 Libbox.xcframework
         run: |
-          echo "=== 编译 sing-box 内核为 iOS 动态库 ==="
+          echo "=== 用 gomobile 编译 Libbox.xcframework ==="
           cd sing-box-custom
+          export PATH="$HOME/go/bin:$PATH"
 
-          # 获取 iPhoneOS SDK 路径
-          SDKROOT=$(xcrun --sdk iphoneos --show-sdk-path)
-          echo "SDKROOT: $SDKROOT"
+          # 编译 apple 平台（iOS + macOS）
+          go run ./cmd/internal/build_libbox -target apple
 
-          # 编译为 c-archive 静态库（后续可链接到 framework）
-          CGO_ENABLED=1 \
-          GOOS=ios \
-          GOARCH=arm64 \
-          SDKROOT="$SDKROOT" \
-          CGO_CFLAGS="-arch arm64 -isysroot $SDKROOT" \
-          CGO_LDFLAGS="-arch arm64 -isysroot $SDKROOT" \
-          go build -buildmode=c-archive \
-            -o ../libsingbox-custom.a \
-            ./cmd/sing-box
+          echo "=== 编译产物 ==="
+          ls -lh Libbox.xcframework/ 2>/dev/null || find . -name "*.xcframework" -type d
 
-          ls -lh ../libsingbox-custom.a
-          file ../libsingbox-custom.a
-
-      - name: 替换内核并重新签名
+      - name: 检出 sing-box-for-apple 客户端源码
         run: |
-          echo "=== 替换 Library.framework 内核 ==="
-          # 官方内核是动态库，我们编译的是静态库
-          # 当前阶段：验证静态库编译成功，后续需要用 Xcode 重新链接 framework
-          echo "静态库已编译: libsingbox-custom.a"
-          echo "注意：完整替换需要用 Xcode 重新链接 Library.framework"
-          echo "当前流水线先输出官方包 + 定制静态库，后续完善 framework 替换"
+          echo "=== 检出官方 sing-box-for-apple ==="
+          git clone --depth 1 --recursive https://github.com/SagerNet/sing-box-for-apple.git
+          cd sing-box-for-apple
+          ls -la
 
-          # 复制定制静态库到产物目录
-          mkdir -p output
-          cp libsingbox-custom.a output/
-          cp SFI-official.deb output/SFI-official-base.deb
-
-      - name: 安装 ldid 并签名
+      - name: 替换 Libbox.xcframework
         run: |
-          echo "=== 安装 ldid ==="
-          brew install ldid 2>/dev/null || true
-          which ldid || echo "ldid 安装完成"
+          echo "=== 替换为定制内核 ==="
+          # 复制定制的 Libbox.xcframework 到客户端项目
+          cp -R sing-box-custom/Libbox.xcframework sing-box-for-apple/
+          ls -lh sing-box-for-apple/Libbox.xcframework/
 
-      - name: 打包定制 deb（阶段一：官方包 + 说明）
+      - name: 编译越狱版 SFI
         run: |
-          echo "=== 打包定制 deb ==="
-          # 阶段一：先输出官方重打包，验证流水线
-          # 后续阶段：替换内核后重新打包
-          mkdir -p output
+          echo "=== Xcode 编译越狱版 SFI ==="
+          cd sing-box-for-apple
+          export PATH="$HOME/go/bin:/opt/homebrew/bin:$PATH"
 
-          # 修改包名和版本
-          sed -i '' 's/^Package: .*/Package: ${{ env.PACKAGE_NAME }}/' sfi-root/DEBIAN/control
-          sed -i '' 's/^Version: .*/Version: ${{ env.SFI_VERSION }}-sb1mitm1/' sfi-root/DEBIAN/control
-          sed -i '' 's/^Description: .*/Description: SFI 定制版 - 集成 SB1 MITM 模块/' sfi-root/DEBIAN/control
+          # 运行官方越狱打包脚本
+          bash Jailbreak/package.sh
 
-          # 手动打包 deb（macOS 无 dpkg-deb，用 ar + tar.gz）
-          echo "=== 手动构建 deb ==="
-          TMP_DIR=$(mktemp -d)
-          echo "2.0" > "$TMP_DIR/debian-binary"
-          tar -czf "$TMP_DIR/control.tar.gz" -C sfi-root/DEBIAN .
-          tar -czf "$TMP_DIR/data.tar.gz" -C sfi-root ./var
-          ar r output/SFI-sb1mitm-iphoneos-arm64.deb \
-            "$TMP_DIR/debian-binary" \
-            "$TMP_DIR/control.tar.gz" \
-            "$TMP_DIR/data.tar.gz"
-          rm -rf "$TMP_DIR"
-
-          ls -lh output/
+          echo "=== 构建产物 ==="
+          ls -lh build/jailbreak/*.deb 2>/dev/null || find build -name "*.deb"
 
       - name: 上传定制 deb Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: SFI-sb1mitm-deb
-          path: output/SFI-sb1mitm-iphoneos-arm64.deb
+          name: SFI-sb1mitm-iphoneos-arm64
+          path: sing-box-for-apple/build/jailbreak/*.deb
           retention-days: 30
 
-      - name: 上传定制内核静态库
+      - name: 上传 Libbox.xcframework
         uses: actions/upload-artifact@v4
         with:
-          name: libsingbox-custom-a
-          path: output/libsingbox-custom.a
+          name: Libbox-custom-xcframework
+          path: sing-box-custom/Libbox.xcframework
           retention-days: 30
