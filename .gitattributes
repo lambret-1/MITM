@@ -1,0 +1,2 @@
+Libbox.xcframework/**/Libbox filter=lfs diff=lfs merge=lfs -text
+*.framework/Versions/A/Libbox filter=lfs diff=lfs merge=lfs -text
