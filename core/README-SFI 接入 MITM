@@ -1089,31 +1089,1256 @@ Internet
 
 ---
 
-下一步建议生成：
-
-**《sing-box MITM + SFI 第一阶段源码 Patch 计划（commit-by-commit）》**
-
-会具体到：
-
-```
-commit 001:
-option/mitm.go
-
-commit 002:
-service registry
-
-commit 003:
-libbox API
-
-commit 004:
-SFI Swift UI
-
-commit 005:
-Jailbreak CA
-```
 
 然后可以直接进入代码实现阶段。
 
 [1]: https://github.com/SagerNet/sing-box-for-ios/blob/main/README.md?utm_source=chatgpt.com "sing-box-for-ios/README.md at main · SagerNet/sing-box-for-ios · GitHub"
 [2]: https://github.com/SagerNet/sing-box-for-apple?utm_source=chatgpt.com "GitHub - SagerNet/sing-box-for-apple: iOS/macOS/tvOS client for sing-box · GitHub"
 [3]: https://sing-box.sagernet.org/clients/apple/?utm_source=chatgpt.com "sing-box for Apple platforms - sing-box"
+
+# 《sing-box MITM + SFI 完整阶段源码 Patch 计划》
+
+> 目标：基于 `sing-box testing` 分支 + `sing-box-for-apple`（SFI）工程，实现完整 MITM 能力接入。
+> 最终产物：
+>
+> ```
+> SFI.app
+>    |
+>    |
+> Libbox.xcframework
+>    |
+>    |
+> sing-box MITM Core
+>    |
+>    +── TUN
+>    +── TLS MITM
+>    +── HTTP/2
+>    +── WebSocket
+>    +── Rewrite
+>    +── Router
+>    +── Outbound
+> ```
+>
+> SFI 当前架构本身就是 Apple UI + Network Extension + Libbox Core 模式，MITM 应放在 Core 层，而不是 Swift 网络层。([Sing Box][1])
+
+---
+
+# 总体 Git 分支规划
+
+建议维护两个仓库：
+
+## sing-box fork
+
+```text
+sing-box
+
+main
+ |
+ └── feature/mitm-core
+```
+
+---
+
+## SFI fork
+
+```text
+sing-box-for-apple
+
+dev
+ |
+ └── feature/mitm-support
+```
+
+---
+
+# Patch 总览
+
+最终拆成：
+
+```text
+0001  MITM configuration model
+0002  MITM service registry
+0003  MITM CA engine
+0004  MITM certificate generator
+0005  TLS ClientHello interceptor
+0006  TUN interception interface
+0007  MITM router integration
+0008  HTTP/1.1 proxy engine
+0009  HTTP/2 engine
+0010  WebSocket relay
+0011  Rewrite engine
+0012  libbox MITM API
+0013  SFI configuration UI
+0014  SFI CA manager
+0015  Jailbreak CA deployment
+0016  Integration tests
+```
+
+---
+
+# Phase 0：工程准备
+
+## Patch 0000
+
+### 建立开发环境
+
+目录：
+
+```text
+workspace/
+
+├── sing-box
+└── sing-box-for-apple
+```
+
+确认：
+
+```bash
+go version
+
+xcodebuild -version
+```
+
+---
+
+生成 baseline：
+
+```bash
+git checkout testing
+
+git tag mitm-base
+```
+
+---
+
+# Phase 1：MITM 配置体系
+
+## Commit 0001
+
+### 新增：
+
+```
+option/mitm.go
+```
+
+---
+
+代码：
+
+```go
+type MITMServiceOptions struct {
+
+    Enabled bool `json:"enabled"`
+
+    CA MITMCAOptions `json:"ca"`
+
+    Match MITMMatchOptions `json:"match"`
+
+    Rewrite MITMRewriteOptions `json:"rewrite"`
+
+}
+```
+
+---
+
+影响：
+
+```text
+JSON
+
+ ↓
+
+option.Options
+
+ ↓
+
+schema
+
+ ↓
+
+check
+```
+
+---
+
+验证：
+
+```bash
+sing-box check -c mitm.json
+```
+
+---
+
+# Phase 2：Service Registry 接入
+
+## Commit 0002
+
+目标：
+
+让：
+
+```json
+{
+"type":"mitm"
+}
+```
+
+可以创建实例。
+
+---
+
+修改：
+
+```
+include/service.go
+```
+
+加入：
+
+```go
+mitm.RegisterService(
+    registry,
+)
+```
+
+---
+
+新增：
+
+```
+protocol/mitm/service.go
+```
+
+骨架：
+
+```go
+type Service struct {
+
+ctx context.Context
+
+options option.MITMServiceOptions
+
+}
+```
+
+---
+
+完成后：
+
+流程：
+
+```text
+config.json
+
+↓
+
+Service Registry
+
+↓
+
+MITM Service
+
+↓
+
+Service Manager
+```
+
+---
+
+# Phase 3：CA 管理模块
+
+## Commit 0003
+
+新增：
+
+```
+protocol/mitm/ca.go
+```
+
+---
+
+结构：
+
+```go
+type CA struct {
+
+Certificate *x509.Certificate
+
+PrivateKey crypto.PrivateKey
+
+}
+```
+
+---
+
+功能：
+
+* 加载 PEM
+* 验证 CA
+* 验证私钥匹配
+
+测试：
+
+```
+TestLoadCA()
+```
+
+---
+
+# Phase 4：动态证书签发
+
+## Commit 0004
+
+新增：
+
+```
+protocol/mitm/certificate.go
+```
+
+---
+
+实现：
+
+```go
+func IssueCertificate(
+    domain string,
+)(
+    *tls.Certificate,
+    error,
+)
+```
+
+---
+
+流程：
+
+```text
+example.com
+
+↓
+
+Generate RSA/ECDSA key
+
+↓
+
+Create x509
+
+↓
+
+CA Sign
+
+↓
+
+tls.Certificate
+```
+
+---
+
+增加：
+
+```
+certificate_cache.go
+```
+
+缓存：
+
+```go
+map[string]*tls.Certificate
+```
+
+---
+
+测试：
+
+```
+TestCertificateIssue
+```
+
+---
+
+# Phase 5：TLS ClientHello
+
+## Commit 0005
+
+新增：
+
+```
+protocol/mitm/clienthello.go
+```
+
+---
+
+目标：
+
+从：
+
+```
+TCP
+```
+
+读取：
+
+```
+TLS ClientHello
+```
+
+解析：
+
+```text
+SNI
+
+ALPN
+
+TLS Version
+```
+
+---
+
+结构：
+
+```go
+type ClientHelloInfo struct {
+
+ServerName string
+
+ALPN []string
+
+}
+```
+
+---
+
+测试：
+
+输入：
+
+```
+api.example.com
+```
+
+输出：
+
+```
+SNI=api.example.com
+```
+
+---
+
+# Phase 6：TUN interception
+
+## Commit 0006
+
+修改：
+
+```
+protocol/tun/
+```
+
+不要加入 MITM 逻辑。
+
+只增加接口：
+
+```go
+type Interceptor interface {
+
+
+ShouldIntercept(
+metadata.Metadata,
+) bool
+
+
+Intercept(
+conn net.Conn,
+metadata.Metadata,
+) error
+
+
+}
+```
+
+---
+
+数据：
+
+```text
+TUN
+
+ |
+
+Interceptor
+
+ |
+
+MITM
+```
+
+---
+
+# Phase 7：MITM TLS Server
+
+## Commit 0007
+
+新增：
+
+```
+protocol/mitm/tls.go
+```
+
+---
+
+实现：
+
+```go
+tls.Server(
+clientConn,
+config,
+)
+```
+
+---
+
+流程：
+
+```text
+iOS App
+
+TLS Client
+
+↓
+
+MITM
+
+tls.Server
+
+↓
+
+HTTP plaintext
+```
+
+---
+
+# Phase 8：Router 融合
+
+## Commit 0008
+
+重点 patch。
+
+---
+
+禁止：
+
+```go
+net.Dial()
+```
+
+直接连接。
+
+---
+
+必须：
+
+```text
+HTTP Request
+
+↓
+
+Router
+
+↓
+
+Outbound
+```
+
+---
+
+新增：
+
+```
+router.go
+```
+
+接口：
+
+```go
+func RouteRequest(
+request *http.Request,
+)
+```
+
+---
+
+数据：
+
+```text
+MITM
+
+ ↓
+
+sing-box Router
+
+ ↓
+
+proxy/direct
+```
+
+---
+
+# Phase 9：HTTP/1.1
+
+## Commit 0009
+
+新增：
+
+```
+http1.go
+```
+
+---
+
+支持：
+
+* GET
+* POST
+* Header
+* Cookie
+* Body
+
+---
+
+流程：
+
+```text
+TLS
+
+↓
+
+http.ReadRequest
+
+↓
+
+rewrite
+
+↓
+
+router
+
+↓
+
+response
+```
+
+---
+
+# Phase 10：HTTP/2
+
+## Commit 0010
+
+新增：
+
+```
+http2.go
+```
+
+---
+
+使用：
+
+```
+golang.org/x/net/http2
+```
+
+---
+
+支持：
+
+* stream
+* header
+* data frame
+* flow control
+
+---
+
+流程：
+
+```text
+ALPN=h2
+
+↓
+
+HTTP2 Server
+
+↓
+
+HTTP2 Client
+```
+
+---
+
+# Phase 11：WebSocket
+
+## Commit 0011
+
+新增：
+
+```
+websocket.go
+```
+
+---
+
+支持：
+
+```
+HTTP Upgrade
+
+↓
+
+101 Switching Protocols
+
+↓
+
+TCP relay
+```
+
+---
+
+核心：
+
+```go
+io.Copy()
+```
+
+双向：
+
+```text
+client
+
+ ⇄
+
+MITM
+
+ ⇄
+
+server
+```
+
+---
+
+# Phase 12：Rewrite Engine
+
+## Commit 0012
+
+目录：
+
+```
+protocol/mitm/rewrite/
+```
+
+---
+
+结构：
+
+```
+engine.go
+
+rule.go
+
+body.go
+```
+
+---
+
+支持：
+
+```json
+{
+"domain_suffix":[
+ "example.com"
+],
+
+"replace":[
+ {
+  "from":"abc",
+  "to":"xyz"
+ }
+]
+}
+```
+
+---
+
+处理：
+
+```
+gzip
+
+br
+
+zstd
+```
+
+---
+
+# Phase 13：libbox API
+
+## Commit 0013
+
+进入：
+
+```
+experimental/libbox
+```
+
+---
+
+新增：
+
+```
+mitm.go
+```
+
+---
+
+导出：
+
+```go
+GetMITMStatus()
+```
+
+返回：
+
+```json
+{
+"enabled":true,
+
+"caInstalled":true,
+
+"connections":5
+}
+```
+
+---
+
+生成：
+
+```
+Libbox.xcframework
+```
+
+SFI 使用 Libbox framework 作为核心桥接。([GitHub][2])
+
+---
+
+# Phase 14：SFI 配置支持
+
+## Commit 0014
+
+仓库：
+
+```
+sing-box-for-apple
+```
+
+---
+
+新增：
+
+```
+SFI/Settings/MITM/
+```
+
+---
+
+文件：
+
+```
+MITMSettingsView.swift
+
+MITMSettingsModel.swift
+
+MITMConfigBuilder.swift
+```
+
+---
+
+UI：
+
+```
+Settings
+
+ └── MITM
+
+      Enable
+
+      CA Status
+
+      Export CA
+
+      Debug Logs
+```
+
+---
+
+生成：
+
+```json
+services:[
+ {
+ "type":"mitm"
+ }
+]
+```
+
+---
+
+# Phase 15：SFI CA 管理
+
+## Commit 0015
+
+新增：
+
+```
+Library/MITM/
+```
+
+---
+
+负责：
+
+```text
+Generate CA
+
+↓
+
+Store
+
+↓
+
+Export
+
+↓
+
+Install
+```
+
+---
+
+路径：
+
+```
+Library/Application Support/SFI/MITM/
+```
+
+---
+
+保存：
+
+```
+ca.pem
+
+ca.key
+```
+
+---
+
+# Phase 16：越狱版本支持
+
+## Commit 0016
+
+仓库：
+
+```
+Jailbreak/
+```
+
+以及：
+
+```
+JailbreakDaemon/
+```
+
+---
+
+增加：
+
+```
+MITMCAInstaller.swift
+```
+
+---
+
+功能：
+
+* 文件部署
+* 权限处理
+* daemon 配置
+
+---
+
+目录：
+
+```
+/var/mobile/singbox/
+
+├── config.json
+
+└── mitm/
+
+    ├── ca.pem
+
+    └── ca.key
+```
+
+---
+
+# Phase 17：Build 系统
+
+## Commit 0017
+
+修改：
+
+```
+Makefile
+```
+
+增加：
+
+```make
+make libbox-mitm
+```
+
+---
+
+流程：
+
+```text
+go build
+
+↓
+
+gomobile bind
+
+↓
+
+xcframework
+
+↓
+
+Xcode
+```
+
+---
+
+# Phase 18：自动化测试
+
+## Commit 0018
+
+新增：
+
+```
+test/mitm/
+```
+
+---
+
+测试：
+
+```
+config_test.go
+
+ca_test.go
+
+certificate_test.go
+
+tls_test.go
+
+http_test.go
+
+router_test.go
+
+websocket_test.go
+```
+
+---
+
+# Phase 19：真机测试
+
+测试链：
+
+```text
+iPhone
+
+↓
+
+SFI
+
+↓
+
+VPN Extension
+
+↓
+
+TUN
+
+↓
+
+MITM
+
+↓
+
+Router
+
+↓
+
+Outbound
+
+↓
+
+Internet
+```
+
+---
+
+验证：
+
+## HTTPS
+
+```
+https://example.com
+```
+
+日志：
+
+```
+MITM:
+SNI example.com
+
+certificate issued
+
+route proxy
+```
+
+---
+
+## HTTP/2
+
+```
+ALPN=h2
+```
+
+---
+
+## WebSocket
+
+```
+101 Upgrade
+```
+
+---
+
+# Phase 20：最终 Release 分支
+
+最终：
+
+```
+sing-box
+
+feature/mitm-core
+
+        merge
+
+testing
+```
+
+---
+
+SFI：
+
+```
+feature/mitm-support
+
+        merge
+
+dev
+```
+
+---
+
+# 最终 Patch 顺序总结
+
+| Patch | 内容               | 仓库       |
+| ----- | ---------------- | -------- |
+| 0001  | MITM options     | sing-box |
+| 0002  | Service Registry | sing-box |
+| 0003  | CA engine        | sing-box |
+| 0004  | Certificate      | sing-box |
+| 0005  | TLS ClientHello  | sing-box |
+| 0006  | TUN interceptor  | sing-box |
+| 0007  | TLS server       | sing-box |
+| 0008  | Router           | sing-box |
+| 0009  | HTTP/1.1         | sing-box |
+| 0010  | HTTP/2           | sing-box |
+| 0011  | WebSocket        | sing-box |
+| 0012  | Rewrite          | sing-box |
+| 0013  | Libbox API       | sing-box |
+| 0014  | SFI UI           | SFI      |
+| 0015  | CA manager       | SFI      |
+| 0016  | Jailbreak        | SFI      |
+| 0017  | Build            | Both     |
+| 0018  | Tests            | Both     |
+
+---
+
+# 最终完成状态
+
+完成后：
+
+```
+SFI
+
+↓
+
+NetworkExtension
+
+↓
+
+Libbox
+
+↓
+
+sing-box
+
+↓
+
+MITM Service
+
+↓
+
+TLS interception
+
+↓
+
+HTTP engine
+
+↓
+
+Rewrite
+
+↓
+
+Router
+
+↓
+
+Outbound
+```
+
+形成完整：
+
+**SFI + sing-box Core + MITM + iOS 越狱部署平台。**
+
+---
+
+
+[1]: https://sing-box.sagernet.org/clients/apple/?utm_source=chatgpt.com "sing-box for Apple platforms - sing-box"
+[2]: https://github.com/proother/sing-box-lib/blob/main/README.md?utm_source=chatgpt.com "sing-box-lib/README.md at main · proother/sing-box-lib · GitHub"
