@@ -253,7 +253,7 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         nwMonitor = nil
     }
 
-    public func getInterfaces() throws -> LibboxNetworkInterfaceIteratorProtocol {
+    public func getInterfaces() throws -> any LibboxNetworkInterfaceIteratorProtocol {
         guard let nwMonitor else {
             throw NSError(domain: "NWMonitor not started", code: 0)
         }
