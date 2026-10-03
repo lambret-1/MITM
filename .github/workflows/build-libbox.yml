@@ -18,6 +18,9 @@ on:
 env:
   GO_VERSION: "1.25.5"
 
+permissions:
+  contents: write
+
 jobs:
   build-xcframework:
     name: 编译并提交 Libbox.xcframework
@@ -31,12 +34,14 @@ jobs:
         with:
           ref: iOS
           path: apple-app
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 检出 sing-box 分支
         uses: actions/checkout@v4
         with:
           ref: sing-box
           path: sing-box
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: 设置 Go 环境
         uses: actions/setup-go@v5
@@ -90,5 +95,6 @@ jobs:
         run: |
           git add -A
           git diff --cached --stat
+          git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           git commit -m "build: 更新 Libbox.xcframework 静态库（sing-box 分支构建）" || echo "无变更"
           git push origin HEAD:iOS
