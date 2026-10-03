@@ -203,7 +203,7 @@ extension ExtensionProvider: LibboxCommandServerHandlerProtocol {
         }
     }
 
-    public func setSystemProxyEnabled(_: Bool) throws {}
+    public func setSystemProxyEnabled(_ isEnabled: Bool) throws {}
 
     public func triggerNativeCrash() throws {
         fatalError("native crash")
