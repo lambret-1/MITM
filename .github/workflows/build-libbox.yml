@@ -35,6 +35,7 @@ jobs:
           ref: iOS
           path: apple-app
           token: ${{ secrets.GITHUB_TOKEN }}
+          lfs: true
 
       - name: 检出 sing-box 分支
         uses: actions/checkout@v4
@@ -42,6 +43,7 @@ jobs:
           ref: sing-box
           path: sing-box
           token: ${{ secrets.GITHUB_TOKEN }}
+          lfs: false
 
       - name: 设置 Go 环境
         uses: actions/setup-go@v5
@@ -84,7 +86,7 @@ jobs:
           sed -i '' '/\/Libbox.xcframework\//d' .gitignore
           cat .gitignore
 
-      - name: 配置 Git
+      - name: 配置 Git 与 LFS
         working-directory: apple-app
         run: |
           git config user.name "github-actions[bot]"
@@ -92,12 +94,17 @@ jobs:
           git config http.postBuffer 524288000
           git config http.lowSpeedLimit 0
           git config http.lowSpeedTime 999999
+          git lfs install --local
+          git lfs track "Libbox.xcframework/**/Libbox"
+          git lfs track "*.framework/Versions/A/Libbox"
+          cat .gitattributes
 
       - name: 提交并推送
         working-directory: apple-app
         run: |
           git add -A
-          git diff --cached --stat
+          git lfs ls-files
+          git diff --cached --stat | tail -5
           git remote set-url origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           git commit -m "build: 更新 Libbox.xcframework 静态库（sing-box 分支构建）" || echo "无变更"
           git push --verbose origin HEAD:iOS
