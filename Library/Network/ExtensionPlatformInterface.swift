@@ -205,8 +205,8 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
 
     public func autoDetectControl(_: Int32) throws {}
 
-    public func findConnectionOwner(_: Int32, sourceAddress _: String?, sourcePort _: Int32, destinationAddress _: String?, destinationPort _: Int32) -> LibboxConnectionOwner! {
-        nil
+    public func findConnectionOwner(_: Int32, sourceAddress _: String?, sourcePort _: Int32, destinationAddress _: String?, destinationPort _: Int32) throws -> LibboxConnectionOwner {
+        throw NSError(domain: "not implemented", code: 0)
     }
     public func useProcFS() -> Bool {
         false
@@ -427,12 +427,12 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         false
     }
 
-    public func openShellSession(_: LibboxPlatformUser?, command _: String?, environ _: (any LibboxStringIteratorProtocol)?, term _: String?, rows _: Int32, cols _: Int32) -> (any LibboxShellSessionProtocol)! {
-        nil
+    public func openShellSession(_: LibboxPlatformUser?, command _: String?, environ _: (any LibboxStringIteratorProtocol)?, term _: String?, rows _: Int32, cols _: Int32) throws -> any LibboxShellSessionProtocol {
+        throw NSError(domain: "not implemented", code: 0)
     }
 
-    public func lookupUser(_: String?) -> LibboxPlatformUser! {
-        nil
+    public func lookupUser(_: String?) throws -> LibboxPlatformUser {
+        throw NSError(domain: "not implemented", code: 0)
     }
 
     public func lookupSFTPServer() throws -> String {
@@ -447,16 +447,16 @@ public class ExtensionPlatformInterface: NSObject, LibboxPlatformInterfaceProtoc
         false
     }
 
-    public func createAutoRedirect(_: Data?, handler _: LibboxAutoRedirectHandlerProtocol?) -> (any LibboxAutoRedirectSessionProtocol)! {
-        nil
+    public func createAutoRedirect(_: Data?, handler _: LibboxAutoRedirectHandlerProtocol?) throws -> any LibboxAutoRedirectSessionProtocol {
+        throw NSError(domain: "not implemented", code: 0)
     }
 
     public func usePlatformBridge() -> Bool {
         false
     }
 
-    public func createBridge(_: LibboxBridgeOptions?) -> (any LibboxBridgeSessionProtocol)! {
-        nil
+    public func createBridge(_: LibboxBridgeOptions?) throws -> any LibboxBridgeSessionProtocol {
+        throw NSError(domain: "not implemented", code: 0)
     }
 
     public func cancelNotification(_: String?, typeID _: Int32) throws {}
